@@ -665,14 +665,19 @@ export function apply(ctx, config) {
 
   // Serve the console API under the host's web server when one exists.
   ctx.inject(['webServer'], scoped => {
-    const server = scoped.get?.('webServer')
-    if (server === undefined || typeof server.registerRoute !== 'function') return
-    server.registerRoute('/api/dsh-model-admin', async request => {
-      const body = await readJsonBody(request)
-      const result = await api.handle(body?.method ?? request.method, body)
-      if (result === null) return jsonResponse(404, { ok: false, error: { code: 'NOT_FOUND', message: 'unknown method' } })
-      return jsonResponse(200, result)
-    })
+    const server = scoped.webServer
+    if (server === undefined || typeof server.register !== 'function') return
+    const handler = async (req, res) => {
+      const body = await readJsonBody(req)
+      const result = await api.handle(body?.method ?? req.method, body)
+      const send = (status, payload) => {
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(payload))
+      }
+      if (result === null) return send(404, { ok: false, error: { code: 'NOT_FOUND', message: 'unknown method' } })
+      send(200, result)
+    }
+    scoped.effect(() => server.register({ kind: 'prefix', path: '/api/dsh-model-admin', handler }), 'dsh-model-admin: api routes')
     logger.info?.('dsh-model-admin: console API served at /api/dsh-model-admin')
   })
 
