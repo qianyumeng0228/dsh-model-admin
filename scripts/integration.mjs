@@ -6,7 +6,7 @@
  *   1. `vendor/channel-pack/pack.js` imports and `apply`s under a mock host
  *      without throwing (its own constructor graph is intact);
  *   2. the pack registers its RPC endpoint and its providers on the services
- *      this plugin injects — i.e. the seam model-admin drives is real;
+ *      this plugin injects — i.e. the seam dsh-model-admin drives is real;
  *   3. `account.list` / `credits.claimAll` really exist upstream and answer
  *      in the vocabulary this plugin decodes.
  *
@@ -36,7 +36,7 @@ function check(label, fn) {
   }
 }
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'model-admin-int-'))
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-model-admin-int-'))
 process.env.DSH_HOME = home
 delete process.env.MODEL_ADMIN_NO_PACK
 
@@ -138,7 +138,7 @@ function createMockCtx({ connection, routes, onError }) {
       info: () => {},
       warn: message => console.log(`      [warn] ${message}`),
     },
-    fiber: { entry: { options: { id: 'model-admin' } } },
+    fiber: { entry: { options: { id: 'dsh-model-admin' } } },
     effect(fn, _label) {
       try {
         return fn()

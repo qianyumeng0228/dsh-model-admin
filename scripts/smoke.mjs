@@ -31,14 +31,14 @@ function check(label, fn) {
   }
 }
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'model-admin-smoke-'))
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-model-admin-smoke-'))
 process.env.DSH_HOME = home
 
 const entry = await import(new URL('../index.js', import.meta.url))
 const { createApiRoutes, sanitizeSettings, Config, name, inject } = entry
 
 console.log('\n[1] cordis contract')
-check('plugin name is model-admin', () => assert.equal(name, 'model-admin'))
+check('plugin name is model-admin', () => assert.equal(name, 'dsh-model-admin'))
 check('inject declares only required services', () => {
   assert.deepEqual(inject, ['settings'])
 })
@@ -58,7 +58,7 @@ check('apply returns a status surface', () => {
   assert.equal(state.settings.runHour, 9)
 })
 check('console API registered on the web server', () => {
-  assert.ok(mockCtx.routes.has('/api/model-admin'))
+  assert.ok(mockCtx.routes.has('/api/dsh-model-admin'))
 })
 
 console.log('\n[3] one check-in round over a fake pack')
@@ -112,7 +112,7 @@ check('claimAll went out once per check-in channel', () => {
   assert.ok(!claims.some(c => c.payload.provider === 'gemini'))
 })
 check('the day is stamped in the store', () => {
-  const doc = JSON.parse(fs.readFileSync(path.join(home, 'model-admin', 'checkin.json'), 'utf8'))
+  const doc = JSON.parse(fs.readFileSync(path.join(home, 'dsh-model-admin', 'checkin.json'), 'utf8'))
   assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(doc.lastDate))
   assert.equal(doc.rows.length, runResult.value.rows.length)
   assert.equal(doc.history.length, 1)

@@ -14,7 +14,7 @@
  * `PACK_UNAVAILABLE` and the console says why, instead of showing an empty
  * account list that reads as "you have no accounts".
  *
- * Data layout (under `~/.dsh/model-admin/`):
+ * Data layout (under `~/.dsh/dsh-model-admin/`):
  *   settings.json  console preferences (schedule hour, expiring window)
  *   checkin.json   last run date, per-channel outcome rows, history
  *   backup/        credential exports the user asked for
@@ -30,12 +30,12 @@ import {
 import { summarize, describeRun } from './src/runs.js'
 
 /** Cordis plugin name; also the settings namespace the host serves. */
-export const name = 'model-admin'
+export const name = 'dsh-model-admin'
 
 export const MODEL_ADMIN_VERSION = '0.1.0'
 
 /** Directory name under the DSH home. */
-export const DATA_DIR_NAME = 'model-admin'
+export const DATA_DIR_NAME = 'dsh-model-admin'
 
 /** Default local hour (UTC+8) the daily run fires at. */
 export const DEFAULT_RUN_HOUR = 9
@@ -164,9 +164,9 @@ function createCheckinEngine({ store, bridge, settings, logger }) {
         rows,
         history: appendHistory(store.load().history, nowMs, describeRun(rows), totals),
       })
-      logger.info?.(`model-admin: check-in complete (${utc8DateString(nowMs)}): ${describeRun(rows)}`)
+      logger.info?.(`dsh-model-admin: check-in complete (${utc8DateString(nowMs)}): ${describeRun(rows)}`)
     } else {
-      logger.warn?.(`model-admin: check-in collected nothing today; not marking the day (${describeRun(rows)})`)
+      logger.warn?.(`dsh-model-admin: check-in collected nothing today; not marking the day (${describeRun(rows)})`)
     }
     return { rows, totals, marked }
   }
@@ -372,7 +372,7 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
       }
       return { ok: true, value: result }
     } catch (error) {
-      logger.warn?.(`model-admin api ${method} failed: ${String(error?.message ?? error)}`)
+      logger.warn?.(`dsh-model-admin api ${method} failed: ${String(error?.message ?? error)}`)
       return { ok: false, error: { code: 'INTERNAL', message: String(error?.message ?? error).slice(0, 300) } }
     }
   }
@@ -467,22 +467,22 @@ export function apply(ctx, config) {
     packState = packDisabled
       ? { state: 'disabled', error: 'MODEL_ADMIN_NO_PACK=1' }
       : { state: 'failed', error: 'vendored channel pack is missing' }
-    logger.warn?.(`model-admin: channel pack not mounted (${packState.error})`)
+    logger.warn?.(`dsh-model-admin: channel pack not mounted (${packState.error})`)
   } else {
     ctx.inject(['connection', 'credentials', 'llm'], scoped => {
       let stopped = false
-      scoped.effect(() => () => { stopped = true }, 'model-admin: channel pack')
+      scoped.effect(() => () => { stopped = true }, 'dsh-model-admin: channel pack')
       void import('./vendor/channel-pack/pack.js')
         .then(pack => {
           if (stopped) return
           pack.apply(scoped, {})
           packState = { state: 'ready', error: '' }
-          logger.info?.('model-admin: channel pack mounted (10 account channels)')
+          logger.info?.('dsh-model-admin: channel pack mounted (10 account channels)')
         })
         .catch(error => {
           if (stopped) return
           packState = { state: 'failed', error: String(error?.message ?? error).slice(0, 300) }
-          logger.warn?.(`model-admin: channel pack unavailable (${packState.error})`)
+          logger.warn?.(`dsh-model-admin: channel pack unavailable (${packState.error})`)
         })
     })
   }
@@ -506,13 +506,13 @@ export function apply(ctx, config) {
   ctx.inject(['webServer'], scoped => {
     const server = scoped.get?.('webServer')
     if (server === undefined || typeof server.registerRoute !== 'function') return
-    server.registerRoute('/api/model-admin', async request => {
+    server.registerRoute('/api/dsh-model-admin', async request => {
       const body = await readJsonBody(request)
       const result = await api.handle(body?.method ?? request.method, body)
       if (result === null) return jsonResponse(404, { ok: false, error: { code: 'NOT_FOUND', message: 'unknown method' } })
       return jsonResponse(200, result)
     })
-    logger.info?.('model-admin: console API served at /api/model-admin')
+    logger.info?.('dsh-model-admin: console API served at /api/dsh-model-admin')
   })
 
   // ── the daily scheduler ────────────────────────────────────────────────────
@@ -537,12 +537,12 @@ export function apply(ctx, config) {
       try {
         if (!engine.state().ranToday) await engine.run()
       } catch (error) {
-        logger.warn?.(`model-admin: scheduled check-in failed: ${String(error?.message ?? error)}`)
+        logger.warn?.(`dsh-model-admin: scheduled check-in failed: ${String(error?.message ?? error)}`)
       }
       scheduleNext()
     }, Math.max(0, delay))
     timer.unref?.()
-    logger.info?.(`model-admin: next check-in in ${Math.round(delay / 60000)} min`)
+    logger.info?.(`dsh-model-admin: next check-in in ${Math.round(delay / 60000)} min`)
   }
   scheduleNext()
 
@@ -553,15 +553,15 @@ export function apply(ctx, config) {
   if (settings().autoCheckin === true && !engine.state().ranToday) {
     setTimeout(() => {
       void engine.run().catch(error => {
-        logger.warn?.(`model-admin: catch-up check-in failed: ${String(error?.message ?? error)}`)
+        logger.warn?.(`dsh-model-admin: catch-up check-in failed: ${String(error?.message ?? error)}`)
       })
     }, 30_000)
   }
 
   ctx.effect(() => () => {
     if (timer !== null) clearTimeout(timer)
-    logger.info?.('model-admin: stopped')
-  }, 'model-admin: lifecycle')
+    logger.info?.('dsh-model-admin: stopped')
+  }, 'dsh-model-admin: lifecycle')
 
   // Console-facing status for /summary-style diagnostics.
   return {

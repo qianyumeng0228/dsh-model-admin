@@ -1,4 +1,4 @@
-# model-admin
+# dsh-model-admin
 
 AI 平台账号与签到管理台（DeepSeek Harness 插件）。
 
@@ -55,7 +55,7 @@ AI 平台账号与签到管理台（DeepSeek Harness 插件）。
 dsh plugin --profile desktop add <this-repo>
 ```
 
-或在 profile 的 `package.json` 里加依赖与 bundle（包名 `model-admin`，
+或在 profile 的 `package.json` 里加依赖与 bundle（包名 `dsh-model-admin`，
 `dsh.profile.bundles` 数组加一项），然后重启 DSH。
 
 安装后在设置面板出现 **Model Admin** 标签页。渠道的登录入口在各渠道自己
@@ -103,7 +103,7 @@ vendor/channel-pack/  内置渠道实现（MIT，出处见 NOTICE.md）
 
 ## 数据
 
-`~/.dsh/model-admin/`：`settings.json`（运行钟点、临期窗口、自动开关）、
+`~/.dsh/dsh-model-admin/`：`settings.json`（运行钟点、临期窗口、自动开关）、
 `checkin.json`（今日标记、逐渠道结果、最近 30 天历史）。
 
 ## 声明

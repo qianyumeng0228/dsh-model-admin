@@ -7,7 +7,7 @@
  * (credential export/import).
  *
  * The panel never talks to the channel pack directly: every call goes
- * through the plugin's own `/api/model-admin` route, so the browser half
+ * through the plugin's own `/api/dsh-model-admin` route, so the browser half
  * has exactly one endpoint and one error envelope to handle. When the pack
  * is not mounted the route says so, and the panel shows the reason instead
  * of empty lists.
@@ -17,7 +17,7 @@
 import { createPanel } from './src/client/panel.js'
 
 /** Route the host half serves. */
-export const API_PATH = '/api/model-admin'
+export const API_PATH = '/api/dsh-model-admin'
 
 /** Default per-call timeout; claim runs may take a while upstream. */
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -99,7 +99,7 @@ export function apply(ctx) {
     return () => {
       dispose?.()
     }
-  }, 'model-admin: console')
+  }, 'dsh-model-admin: console')
 
   return { apiPath: API_PATH }
 }

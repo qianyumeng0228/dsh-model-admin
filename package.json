@@ -1,9 +1,9 @@
 {
-  "name": "model-admin",
+  "name": "dsh-model-admin",
   "displayName": "Model Admin",
   "description": "AI 平台账号与签到管理台：统一管理多家 AI 编程服务（WorkBuddy/CodeBuddy、CodeArts、Qoder、TRAE、Cline、Loomy、Raccoon、MiniMax、ZCode、LobsterAI、Gemini）的登录账号，自动完成每日签到与积分领取，汇总各账号余额与临期积分。不注册模型路由，只做账号与签到的管理面。",
   "version": "0.1.0",
-  "author": "model-admin contributors",
+  "author": "dsh-model-admin contributors",
   "license": "MIT",
   "keywords": [
     "dsh-plugin",

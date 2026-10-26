@@ -1,6 +1,6 @@
 # NOTICE
 
-## model-admin
+## dsh-model-admin
 
 本插件自身代码以 MIT 发布（见 `LICENSE`）。
 

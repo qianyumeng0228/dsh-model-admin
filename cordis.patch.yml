@@ -1,6 +1,6 @@
 # Register the account-management surface without changing the profile's
 # default model. The plugin mounts the vendored channel pack on its own fiber
-# and drives it over the model-admin RPC bridge; it registers no provider.
+# and drives it over the dsh-model-admin RPC bridge; it registers no provider.
 - insert:
-    - id: model-admin
-      name: model-admin
+    - id: dsh-model-admin
+      name: dsh-model-admin

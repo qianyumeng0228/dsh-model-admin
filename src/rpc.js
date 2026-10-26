@@ -119,7 +119,7 @@ export function createBridge({ connection, warn }) {
 
   function fail(code, message) {
     const text = cap(message)
-    if (code !== RPC_CODES.PACK_UNAVAILABLE) warn?.(`model-admin rpc ${code}: ${text}`)
+    if (code !== RPC_CODES.PACK_UNAVAILABLE) warn?.(`dsh-model-admin rpc ${code}: ${text}`)
     return { ok: false, code, message: text }
   }
 

@@ -10,7 +10,7 @@
  *
  * The stubs are deliberately dumb: they record calls and answer benign
  * empties. What the check verifies is the SEAM — the pack mounts, registers
- * its RPC, and answers in the vocabulary model-admin decodes — not the
+ * its RPC, and answers in the vocabulary dsh-model-admin decodes — not the
  * upstream network, which needs real credentials.
  */
 
@@ -171,7 +171,7 @@ export const settingsServiceStub = {
  * (`{ path, methods, fetch }`); the browser half of a plugin reaches the
  * same handlers through `connection.rpc.call('/api', <endpoint>, …)`. The
  * real host bridges the two faces; this stub reproduces that bridge so the
- * integration check exercises the same contract model-admin uses.
+ * integration check exercises the same contract dsh-model-admin uses.
  */
 export function createConnectionServiceStub() {
   /** @type {Map<string, {path: string, methods: string[], fetch: (r: Request) => Promise<Response>}>} */

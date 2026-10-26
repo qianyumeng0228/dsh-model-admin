@@ -1,4 +1,4 @@
-# model-admin
+# dsh-model-admin
 
 Account & check-in console for AI platforms (DeepSeek Harness plugin).
 
@@ -66,7 +66,7 @@ dsh plugin --profile desktop add <this-repo>
 ```
 
 Or add the dependency to your profile's `package.json` plus one entry in
-`dsh.profile.bundles` (package name `model-admin`), then restart DSH. A
+`dsh.profile.bundles` (package name `dsh-model-admin`), then restart DSH. A
 **Model Admin** tab appears in the settings panel. Channel sign-in still
 happens in each channel's own entry (or via "add account" in Model Admin).
 
@@ -120,7 +120,7 @@ vendor/channel-pack/  Bundled channel implementation (MIT, see NOTICE.md)
 
 ## Data
 
-`~/.dsh/model-admin/`: `settings.json` (run hour, expiring window, auto
+`~/.dsh/dsh-model-admin/`: `settings.json` (run hour, expiring window, auto
 switch), `checkin.json` (today's mark, per-channel results, last 30 days
 of history).
 

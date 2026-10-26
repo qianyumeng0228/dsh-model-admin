@@ -76,7 +76,7 @@ export function createPanel({ client, t = key => key }) {
   }
 
   const el = document.createElement('div')
-  el.className = 'model-admin'
+  el.className = 'dsh-model-admin'
 
   const tabs = h('div', { class: 'ma-tabs' })
   const body = h('div', { class: 'ma-body' })
