@@ -666,7 +666,7 @@ export function apply(ctx, config) {
   // Serve the console API under the host's web server when one exists.
   ctx.inject(['webServer'], scoped => {
     const server = scoped.webServer
-    if (server === undefined || typeof server.register !== 'function') return
+    if (server === undefined) return
     const handler = async (req, res) => {
       const body = await readJsonBody(req)
       const result = await api.handle(body?.method ?? req.method, body)

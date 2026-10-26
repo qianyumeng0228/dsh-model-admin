@@ -24,7 +24,12 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const { createElement: h, useState, useEffect, useCallback } = React
 
-    const API_PATH = '/api/dsh-model-admin'
+    // Resolve the API path relative to document.baseURI, not as a hardcoded
+    // absolute path: DSH may serve the settings page under a sub-path, and a
+    // leading slash would drop that prefix and hit the host gateway's 404.
+    const API_PATH = (() => {
+      try { return new URL('api/dsh-model-admin', document.baseURI).pathname } catch { return '/api/dsh-model-admin' }
+    })()
     const DEFAULT_TIMEOUT_MS = 60_000
     const CLAIM_TIMEOUT_MS = 120_000
 
