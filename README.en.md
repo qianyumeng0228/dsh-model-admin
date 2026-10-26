@@ -105,8 +105,11 @@ dsh plugin --profile desktop add <this-repo>
 
 Or add the dependency to your profile's `package.json` plus one entry in
 `dsh.profile.bundles` (package name `dsh-model-admin`), then restart DSH. A
-**Model Admin** tab appears in the settings panel. Channel sign-in still
-happens in each channel's own entry (or via "add account" in Model Admin).
+**Model Admin** row then appears in the settings panel's **left navigation**
+(the 集成 group) — it registers on the host's `settings.section` seat,
+beside Our Free Model and 路由, not inside the plugins page. Channel sign-in
+still happens in each channel's own entry (or via "add account" in Model
+Admin).
 
 ## How the automatic check-in behaves
 
@@ -128,25 +131,34 @@ happens in each channel's own entry (or via "add account" in Model Admin).
 ## Development
 
 ```sh
-node --test "test/*.test.js"                    # 83 unit tests
+node --import ./test/stubs/register.mjs \
+     --test "test/*.test.js"                      # 87 unit tests
 MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs    # end-to-end smoke (mock pack)
 node --import ./test/stubs/register.mjs \
      scripts/integration.mjs                    # integration (real pack)
 ```
 
-The integration check stubs the host-provided `@deepseek-ai/*` modules via
-`test/stubs/` and runs the real channel pack's `apply` outside the DSH
-process: mount, ten provider registrations, `/api/channel-pack` RPC, the
-bridge vocabulary (`account.list` / `credits.claimAll`), and the routing
+The integration check stubs the host-provided `@deepseek-ai/*` modules and
+`react` via `test/stubs/` and runs the real channel pack's `apply` outside
+the DSH process: mount, ten provider registrations, `/api/channel-pack` RPC,
+the bridge vocabulary (`account.list` / `credits.claimAll`), and the routing
 lane (route provider registration, captured channel adapters, aggregated
-route entries, `prepareCall` over a real channel) all exercised.
+route entries, `prepareCall` over a real channel) all exercised. The browser
+half has its own contract check: `client.js` is loaded through
+`window.__ModuleLoader__.load` and asserted to register on
+`settings.section` (id / order / label) and inject the themed CSS.
 
 ### Layout
 
 ```
 index.js                Host half: mounts the pack, RPC bridge, check-in
                         engine, route provider, console API
-client.js               Browser half: settings panel entry and API client
+client.js               Browser half: ModuleLoader bundle registering
+                        settings.section (the left-nav row) + themed CSS +
+                        the API client
+src/client/page.js      Page shell: five tabs, summary read, error banner
+src/client/sections.js  The five sections (check-in / route / accounts /
+                        credits / backup)
 src/channels.js         Channel capability table (login / check-in / notes)
 src/schedule.js         UTC+8 date and scheduling pure functions
 src/runs.js             Run aggregation (units kept separate)
@@ -158,9 +170,13 @@ src/route/normalize.js  Canonical model-name grouping (pure)
 src/route/aggregate.js  Candidates, strategy, capacity intersection (pure)
 src/route/adapter.js    Route provider: adapter capture, prepareCall
                         forwarding, zero-output failure switch
-src/client/panel.js     Panel rendering (five pages)
 vendor/channel-pack/    Bundled channel implementation (MIT, see NOTICE.md)
 ```
+
+The browser half is a **hand-written ModuleLoader bundle**
+(`window.__ModuleLoader__.load({id, factory})`) with no build step; it
+depends only on the `react` the shell provides, and every colour comes from
+the shell's `--dsw-alias-*` tokens so it follows a light/dark switch.
 
 ## Data
 

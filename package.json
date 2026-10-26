@@ -36,10 +36,10 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --import ./test/stubs/register.mjs --test \"test/*.test.js\"",
     "smoke": "MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs",
     "integration": "node --import ./test/stubs/register.mjs scripts/integration.mjs",
-    "check": "node --test \"test/*.test.js\" && MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs && node --import ./test/stubs/register.mjs scripts/integration.mjs"
+    "check": "node --import ./test/stubs/register.mjs --test \"test/*.test.js\" && MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs && node --import ./test/stubs/register.mjs scripts/integration.mjs"
   },
   "dsh": {
     "bundle": {
@@ -47,8 +47,9 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "react",
+        "react-dom",
+        "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-locale"
       ],
       "platform": "web"

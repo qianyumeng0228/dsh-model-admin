@@ -9,6 +9,9 @@
 
 const STUB_URL = new URL('./host-modules.mjs', import.meta.url).href
 
+/** The shell provides react; a standalone check gets the stub. */
+const REACT_STUB_URL = new URL('./react.mjs', import.meta.url).href
+
 const HOST_MODULES = new Set([
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-credentials',
@@ -29,6 +32,9 @@ const HOST_MODULES = new Set([
 ])
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === 'react' || specifier === 'react-dom' || specifier === 'react/jsx-runtime') {
+    return { url: REACT_STUB_URL, shortCircuit: true }
+  }
   if (HOST_MODULES.has(specifier) || specifier.startsWith('@deepseek-ai/dsh-')) {
     return { url: STUB_URL, shortCircuit: true }
   }

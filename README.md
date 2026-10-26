@@ -85,8 +85,10 @@ dsh plugin --profile desktop add <this-repo>
 或在 profile 的 `package.json` 里加依赖与 bundle（包名 `dsh-model-admin`，
 `dsh.profile.bundles` 数组加一项），然后重启 DSH。
 
-安装后在设置面板出现 **Model Admin** 标签页。渠道的登录入口在各渠道自己
-的面板（或首次在 Model Admin 里点添加账号时打开）。
+安装后 **设置面板左侧导航**（「集成」分组）出现 **Model Admin** 一行——
+它注册在宿主的 `settings.section` 座位上，和 Our Free Model、路由同一层，
+不在「内置插件」页里。渠道的登录入口在各渠道自己的面板（或首次在 Model
+Admin 里点添加账号时打开）。
 
 ## 自动签到的语义
 
@@ -103,24 +105,30 @@ dsh plugin --profile desktop add <this-repo>
 ## 开发
 
 ```sh
-node --test "test/*.test.js"                    # 83 项单元测试
+node --import ./test/stubs/register.mjs \
+     --test "test/*.test.js"                      # 87 项单元测试
 MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs    # 端到端冒烟（mock 渠道包）
 node --import ./test/stubs/register.mjs \
      scripts/integration.mjs                    # 接入验证（真实渠道包）
 ```
 
-接入验证通过 `test/stubs/` 把宿主提供的 `@deepseek-ai/*` 模块换成桩，在
-DSH 进程外真实执行渠道包的 `apply`：挂载、注册 10 个 provider、注册
+接入验证通过 `test/stubs/` 把宿主提供的 `@deepseek-ai/*` 与 `react` 换成桩，
+在 DSH 进程外真实执行渠道包的 `apply`：挂载、注册 10 个 provider、注册
 `/api/channel-pack` RPC、bridge 词汇（`account.list` / `credits.claimAll`），
 以及路由链路（路由 provider 注册、渠道 adapter 捕获、聚合出的路由条目、
-真实渠道上的 `prepareCall`）全部走通。
+真实渠道上的 `prepareCall`）全部走通。浏览器半身的契约另有独立检查：走
+`window.__ModuleLoader__.load` 真实加载 `client.js`，断言它注册到
+`settings.section`（id / order / label）并注入主题化的 CSS。
 
 ### 布局
 
 ```
 index.js              宿主半身：挂载渠道包、RPC 桥、签到引擎、路由
                       provider、控制台 API
-client.js             浏览器半身：设置面板入口与 API 客户端
+client.js             浏览器半身：ModuleLoader bundle，注册 settings.section
+                      （设置左侧导航那一行）+ 注入主题 CSS + API 客户端
+src/client/page.js    页面外壳：五个 tab、summary 读取、错误横幅
+src/client/sections.js 五个页面组件（签到 / 路由 / 账号 / 积分 / 备份）
 src/channels.js       渠道能力表（登录方式 / 签到能力 / 注意事项）
 src/schedule.js       UTC+8 日期与调度纯函数
 src/runs.js           一轮签到的结果聚合（单位分列）
@@ -130,9 +138,12 @@ src/route/normalize.js  规范模型名归并（纯函数）
 src/route/aggregate.js  候选、策略、容量交集（纯函数）
 src/route/adapter.js    路由 provider：adapter 捕获、prepareCall
                         转发、零输出失败切换
-src/client/panel.js   面板渲染（五页）
 vendor/channel-pack/  内置渠道实现（MIT，出处见 NOTICE.md）
 ```
+
+浏览器半身是**手写的 ModuleLoader bundle**（`window.__ModuleLoader__.load({id, factory})`），
+没有任何构建步骤；它只依赖 shell 已提供的 `react`，样式全部取宿主的
+`--dsw-alias-*` 主题 token，因此跟随明暗切换。
 
 ## 数据
 
