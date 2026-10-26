@@ -45,19 +45,27 @@ export const ROUTE_MODEL_PREFIX = 'route:'
  * @param {Map<string, any>} captured adapter map, mutated in place
  */
 export function captureAdapters(ctx, captured) {
-  const llm = ctx.llm ?? ctx.get?.('llm')
-  if (llm === undefined || typeof llm.registerAdapter !== 'function') return () => {}
-  const original = llm.registerAdapter.bind(llm)
-  llm.registerAdapter = (providers, adapter) => {
-    for (const provider of providers ?? []) {
-      if (typeof provider === 'string' && provider.length > 0 && provider !== ROUTE_PROVIDER_ID) {
-        captured.set(provider, adapter)
+  try {
+    const llm = ctx.llm ?? ctx.get?.('llm')
+    if (llm === undefined || typeof llm.registerAdapter !== 'function') return () => {}
+    const original = llm.registerAdapter.bind(llm)
+    llm.registerAdapter = (providers, adapter) => {
+      for (const provider of providers ?? []) {
+        if (typeof provider === 'string' && provider.length > 0 && provider !== ROUTE_PROVIDER_ID) {
+          captured.set(provider, adapter)
+        }
       }
+      return original(providers, adapter)
     }
-    return original(providers, adapter)
-  }
-  return () => {
-    llm.registerAdapter = original
+    return () => {
+      try { llm.registerAdapter = original } catch {}
+    }
+  } catch {
+    // The host may freeze the llm service or define registerAdapter as a
+    // non-writable property. Without monkey-patching we simply miss the
+    // channel adapters — the route lane stays empty — instead of crashing
+    // the whole plugin (and its HTTP console) on apply.
+    return () => {}
   }
 }
 

@@ -53,7 +53,10 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ method, payload }),
             signal: controller.signal,
           })
-          const envelope = await response.json()
+          const text = await response.text()
+          let envelope
+          try { envelope = text === '' ? {} : JSON.parse(text) }
+          catch { throw new Error(`API ${method}: HTTP ${response.status} @ ${API_PATH} → ${text.slice(0,200)}`) }
           if (envelope?.ok === true) return envelope.value
           throw new Error(envelope?.error?.message ?? envelope?.error?.code ?? `http ${response.status}`)
         } finally {
@@ -534,6 +537,8 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-model-admin' },
         error === '' ? null : h('div', { className: 'ma-banner', role: 'alert' }, error),
+        h('p', { style: { fontSize: '11px', opacity: 0.5, margin: '0 0 8px' } },
+          `debug: API_PATH=${API_PATH} baseURI=${typeof document !== 'undefined' ? document.baseURI : 'n/a'}`),
         h('div', { className: 'ma-tabs', role: 'tablist' },
           TABS.map(([id, label]) => h('button', {
             key: id,
