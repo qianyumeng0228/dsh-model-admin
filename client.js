@@ -65,6 +65,8 @@ window.__ModuleLoader__.load({
         claim: provider => call('claim', { provider }, CLAIM_TIMEOUT_MS),
         exportBackup: () => call('exportBackup', {}, CLAIM_TIMEOUT_MS),
         updateSettings: patch => call('updateSettings', patch),
+        createAccount: (provider, extra) => call('createAccount', { provider, ...extra }, 90_000),
+        pollLogin: (accountId, provider) => call('pollLogin', { accountId, provider }),
       }
     }
 
@@ -291,19 +293,107 @@ window.__ModuleLoader__.load({
       return `容量取候选交集：${caps.join(' · ')}`
     }
 
-    function AccountsSection({ client, summary }) {
+    function AccountsSection({ client, summary, setError }) {
       const channels = (summary?.channels ?? []).map(c => c.id)
+      const [loginChannel, setLoginChannel] = useState(channels[0] ?? '')
+      const [loginState, setLoginState] = useState(null)
+      const [loginBusy, setLoginBusy] = useState(false)
+      const [notice, setNotice] = useState('')
+      const [reloadKey, setReloadKey] = useState(0)
+
+      // Keep the channel list in sync with the dropdown default.
+      useEffect(() => {
+        if (loginChannel === '' && channels.length > 0) setLoginChannel(channels[0])
+      }, [channels, loginChannel])
+
+      // Poll a pending login until the pack sees the credential, or 10 minutes elapse.
+      useEffect(() => {
+        if (loginState === null) return undefined
+        let alive = true
+        const timer = setInterval(async () => {
+          if (Date.now() - loginState.startedAt > 10 * 60_000) {
+            if (alive) { setLoginState(null); setNotice('登录超时，请重试'); setLoginBusy(false) }
+            return
+          }
+          try {
+            const value = await client.pollLogin(loginState.accountId, loginState.provider)
+            if (!alive) return
+            if (value?.done === true) {
+              setLoginState(null)
+              setLoginBusy(false)
+              if (value.success === false) {
+                setNotice(`登录失败：${value.error ?? '未知原因'}`)
+              } else {
+                setNotice('登录成功')
+                setReloadKey(k => k + 1)
+              }
+            } else if (typeof value?.error === 'string' && value.error !== '') {
+              setLoginState(null)
+              setLoginBusy(false)
+              setNotice(`登录失败：${value.error}`)
+            }
+          } catch { /* keep polling */ }
+        }, 3000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [loginState, client])
+
+      const startLogin = async () => {
+        if (loginBusy || loginChannel === '') return
+        setLoginBusy(true); setNotice('')
+        let popup = null
+        try {
+          popup = window.open('about:blank', '_blank')
+          if (popup) popup.opener = null
+        } catch { popup = null }
+        try {
+          const value = await client.createAccount(loginChannel)
+          const accountId = value?.accountId
+          const url = value?.loginUrl
+          if (typeof accountId !== 'string' || accountId === '') throw new Error('服务端未返回 accountId')
+          if (typeof url === 'string' && url !== '') {
+            try {
+              if (popup && !popup.closed) { popup.location.replace(url) }
+              else { window.open(url, '_blank', 'noopener') }
+            } catch { window.open(url, '_blank', 'noopener') }
+          }
+          setLoginState({ accountId, provider: loginChannel, startedAt: Date.now() })
+        } catch (cause) {
+          try { popup?.close() } catch {}
+          setLoginBusy(false)
+          setNotice(`发起登录失败：${String(cause?.message ?? cause)}`)
+          setError?.(String(cause?.message ?? cause))
+        }
+      }
+
       return h(Card, { title: '账号' },
+        // ── add-account row ──
+        h('div', { className: 'ma-login-row' },
+          h('select', {
+            className: 'ma-select',
+            value: loginChannel,
+            onchange: event => setLoginChannel(event.target.value),
+          }, channels.map(id => h('option', { key: id, value: id }, id))),
+          h('button', {
+            type: 'button',
+            className: 'ma-button ma-button-primary',
+            disabled: loginBusy || loginChannel === '',
+            onclick: startLogin,
+          }, loginBusy && loginState ? '等待授权…' : '添加账号')),
+        loginState !== null
+          ? h('p', { className: 'ma-hint', role: 'status' }, '请在弹出的浏览器窗口中完成授权，完成后这里会自动刷新。')
+          : null,
+        notice !== '' ? h('p', { className: 'ma-hint' }, notice) : null,
         h('div', { className: 'ma-accounts' },
           channels.length === 0
             ? h('p', { className: 'ma-status' }, '没有可管理的渠道。')
-            : channels.map(channel => h(AccountRow, { key: channel, client, channel }))),
+            : channels.map(channel => h(AccountRow, { key: `${channel}-${reloadKey}`, client, channel, onChanged: () => setReloadKey(k => k + 1) }))),
         h('p', { className: 'ma-hint' },
-          '账号的添加、删除、续期与测试在各渠道的登录入口完成；本页汇总全部渠道的账号概况。'))
+          '选择渠道后点「添加账号」，在弹出的浏览器窗口完成登录即可。'))
     }
 
-    function AccountRow({ client, channel }) {
+    function AccountRow({ client, channel, onChanged }) {
       const [text, setText] = useState('读取中…')
+      const [busy, setBusy] = useState(false)
       useEffect(() => {
         let alive = true
         void client.accounts(channel)
@@ -319,9 +409,22 @@ window.__ModuleLoader__.load({
           })
         return () => { alive = false }
       }, [client, channel])
+
+      const remove = async accountId => {
+        if (!window.confirm('确定删除这个账号？')) return
+        setBusy(true)
+        try {
+          await client.call('account.delete', { accountId, provider: channel })
+          onChanged?.()
+        } catch (cause) {
+          setText(`删除失败：${String(cause?.message ?? cause)}`)
+        } finally { setBusy(false) }
+      }
+
       return h('div', { className: 'ma-account-row' },
         h('span', { className: 'ma-account-channel' }, channel),
-        h('span', { className: 'ma-account-status' }, text))
+        h('span', { className: 'ma-account-status' }, text),
+        busy ? h('span', { className: 'ma-hint' }, '…') : null)
     }
 
     function CreditsSection({ client, summary }) {
@@ -695,6 +798,12 @@ function injectStyles() {
   border-bottom: 0.5px solid var(--dsw-alias-border-l1);
   padding: 7px 0;
   font-size: 12.5px;
+}
+.ma-login-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .ma-account-row:last-child, .ma-credit-row:last-child { border-bottom: none; }
 .ma-account-channel, .ma-credit-channel { font-weight: 500; }

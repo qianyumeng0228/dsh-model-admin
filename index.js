@@ -359,6 +359,29 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
       return { ok: true, value: { provider, balances: result.value?.balances ?? result.value ?? [] } }
     },
 
+    /**
+     * Begin a login: reserve a placeholder account and return the URL the user
+     * opens in their browser. The browser half then polls `pollLogin` until the
+     * credential lands. Mirrors the pack's `account.create`; extra fields
+     * (e.g. `zcodeProvider`) are passed through untouched.
+     */
+    async createAccount(body) {
+      const provider = String(body?.provider ?? '')
+      if (provider === '') return { ok: false, error: { code: 'BAD_REQUEST', message: 'provider is required' } }
+      const { provider: _omit, ...extra } = body ?? {}
+      return bridge.call('account.create', { provider, ...extra }, { timeoutMs: 90_000 })
+    },
+
+    /** Poll a pending login until the pack sees the credential. */
+    async pollLogin(body) {
+      const provider = String(body?.provider ?? '')
+      const accountId = String(body?.accountId ?? '')
+      if (provider === '' || accountId === '') {
+        return { ok: false, error: { code: 'BAD_REQUEST', message: 'provider and accountId are required' } }
+      }
+      return bridge.call('login.poll', { accountId, provider })
+    },
+
     /** Claim one channel's daily reward immediately. */
     async claim(body) {
       const provider = String(body?.provider ?? '')
