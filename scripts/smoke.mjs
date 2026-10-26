@@ -130,6 +130,13 @@ check('unknown method returns null (caller answers 404)', async () => {
   const result = await apiRef.handle('nope', {})
   assert.equal(result, null)
 })
+check('summary reports the route lane state', async () => {
+  const s = await apiRef.handle('summary', {})
+  assert.equal(s.value.route, true)
+  assert.ok(Array.isArray(s.value.routes.entries))
+  // No llm service in this composition: no captured channel, no entries.
+  assert.equal(s.value.routes.count, 0)
+})
 check('settings patch drops junk and clamps ranges', () => {
   assert.deepEqual(sanitizeSettings({ runHour: 99, expiringWindowDays: -5, autoCheckin: 'yes' }), {
     runHour: 23, expiringWindowDays: 0,
@@ -154,6 +161,46 @@ check('a pack failure surfaces as ok:false with a capped message', async () => {
   const result = await apiRef.handle('balances', { provider: 'buddy' })
   assert.equal(result.ok, false)
   assert.ok(result.message.length <= 300)
+})
+
+console.log('\n[6] route preference RPC')
+const setStrategy = await apiRef.handle('routeSetStrategy', { key: 'hy3', strategy: 'round-robin' })
+check('routeSetStrategy persists a known strategy', () => {
+  assert.equal(setStrategy.ok, true)
+  assert.equal(setStrategy.value.strategy, 'round-robin')
+})
+const routesDoc = JSON.parse(fs.readFileSync(path.join(home, 'dsh-model-admin', 'routes.json'), 'utf8'))
+check('the preference lands in the routes store', () => {
+  assert.equal(routesDoc.routes.hy3.strategy, 'round-robin')
+})
+const badStrategy = await apiRef.handle('routeSetStrategy', { key: 'hy3', strategy: 'teleport' })
+check('routeSetStrategy refuses an unknown strategy', () => {
+  assert.equal(badStrategy.ok, false)
+  assert.equal(badStrategy.error.code, 'BAD_REQUEST')
+})
+const pinned = await apiRef.handle('routeSetPinned', { key: 'hy3', pinned: ['trae', 'cline'] })
+check('routeSetPinned stores the user order', () => {
+  assert.equal(pinned.ok, true)
+  assert.deepEqual(pinned.value.pinned, ['trae', 'cline'])
+})
+const badPin = await apiRef.handle('routeSetPinned', { key: '', pinned: [] })
+check('routeSetPinned requires a key', () => {
+  assert.equal(badPin.ok, false)
+})
+const disabled = await apiRef.handle('routeSetEnabled', { key: 'hy3', enabled: false })
+check('routeSetEnabled hides a route from the catalog', () => {
+  assert.equal(disabled.ok, true)
+  assert.equal(disabled.value.enabled, false)
+})
+const badEnable = await apiRef.handle('routeSetEnabled', { key: 'hy3', enabled: 'yes' })
+check('routeSetEnabled refuses a non-boolean', () => {
+  assert.equal(badEnable.ok, false)
+})
+const cleared = await apiRef.handle('routeSetEnabled', { key: 'hy3', enabled: true })
+check('re-enabling keeps the preference object', () => {
+  assert.equal(cleared.value.enabled, true)
+  const doc = JSON.parse(fs.readFileSync(path.join(home, 'dsh-model-admin', 'routes.json'), 'utf8'))
+  assert.equal(doc.routes.hy3.strategy, 'round-robin')
 })
 
 console.log(`\n${failures.length === 0 ? 'SMOKE PASS' : `SMOKE FAIL (${failures.length}): ${failures.join(', ')}`}`)

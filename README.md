@@ -1,13 +1,14 @@
 # dsh-model-admin
 
-AI 平台账号与签到管理台（DeepSeek Harness 插件）。
+AI 平台账号、签到与模型路由管理台（DeepSeek Harness 插件）。
 
 [English](README.en.md) | 中文
 
-统一的控制台，管理多家 AI 编程服务的**登录账号**与**每日签到/积分领取**：
-每早自动跑一遍所有支持签到的渠道，逐渠道报告领到了什么；面板汇总各账号
-余额、临期积分与运行历史。**不注册任何模型路由**——装它不会改变对话用
-哪个模型，它只做账号与签到的管理面。
+统一的控制台，把三件事管在一起：多家 AI 编程服务的**登录账号**、
+**每日签到/积分领取**，以及**跨渠道的模型路由**。每早自动跑一遍所有支持
+签到的渠道，逐渠道报告领到了什么；同一个模型在多个渠道可用时归成一个
+路由条目，按候选顺序发请求，某个渠道在产出任何内容前失败就自动换下一
+个。装它不改变对话的默认模型——路由条目就在模型选择器里，选中才生效。
 
 ## 它能管什么
 
@@ -41,13 +42,39 @@ AI 平台账号与签到管理台（DeepSeek Harness 插件）。
 无签到接口的渠道**不会**被自动签到调用——面板明说"无签到"，而不是留一个
 点了必然失败的按钮。
 
-## 四个页面
+## 五个页面
 
 - **签到**：立即运行 / 今日已跑状态、自动开关、运行时间（UTC+8）、逐渠道
   结果表（已领取 / 今日已领 / 未开启 / 无签到 / 失败 + 详情）。
+- **路由**：每个模型一条目，候选渠道按尝试顺序排列；点 ★ 把某个渠道
+  提到最前（★ 的顺序即优先顺序）；策略三选——顺序（fallback）/ 轮换
+  （round-robin）/ 会话粘连（sticky）；候选上标注实际被用的次数。
 - **账号**：各渠道账号概况（几个号、几个可用、读取失败原因）。
 - **积分**：各账号余额，积分与 Token 分列（两种单位不求和）。
 - **备份**：导出含登录凭据的归档。
+
+## 模型路由怎么工作
+
+路由不是第二套渠道实现。它在渠道包挂载**之前**观察宿主登记的所有
+adapter，把每个渠道自己的 `prepareCall` 原样复用——鉴权、账号池、限流
+换号、线上协议都还是各渠道自己的事，路由只做两件它该做的事：
+
+1. **归并**：`deepseek-v4.1-flash`、`deepseek-v4.1-flash-free`、
+   `DeepSeek-V4.1-Flash-SG` 归到同一个规范名下（版本号与产品线保留，
+   只剥 tier 标记——把两个真实不同的模型并成一个是路由能犯的最坏错）。
+2. **选择与切换**：按策略选首个候选发请求；该候选在产出任何可见内容
+   **之前**失败，才换下一个候选重试（已输出的内容收不回来，中途拼接
+   会产生畸形回答）；失败候选的半截 reasoning 不会出现在最终流里。
+
+两条从生态的踩坑里保留下来的不变式：
+
+- **容量取交集，不取并集**：候选里有 128K 窗口的渠道，路由就声明 128K——
+  按最宽的声明发出去，让限流的候选超长失败，是把失败留给用户。
+- **★ 的顺序是严格序**：手工 pin 的渠道永远排在没 pin 的之前，不被任何
+  自动评分静默覆盖。
+
+路由条目出现在模型选择器的 **Model Admin 路由** 分组；没登录任何渠道时
+该分组为空，而不是塞一堆点不动的模型。
 
 ## 安装
 
@@ -76,7 +103,7 @@ dsh plugin --profile desktop add <this-repo>
 ## 开发
 
 ```sh
-node --test "test/*.test.js"                    # 46 项单元测试
+node --test "test/*.test.js"                    # 83 项单元测试
 MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs    # 端到端冒烟（mock 渠道包）
 node --import ./test/stubs/register.mjs \
      scripts/integration.mjs                    # 接入验证（真实渠道包）
@@ -84,27 +111,34 @@ node --import ./test/stubs/register.mjs \
 
 接入验证通过 `test/stubs/` 把宿主提供的 `@deepseek-ai/*` 模块换成桩，在
 DSH 进程外真实执行渠道包的 `apply`：挂载、注册 10 个 provider、注册
-`/api/channel-pack` RPC、bridge 词汇（`account.list` / `credits.claimAll`）
-全部走通。
+`/api/channel-pack` RPC、bridge 词汇（`account.list` / `credits.claimAll`），
+以及路由链路（路由 provider 注册、渠道 adapter 捕获、聚合出的路由条目、
+真实渠道上的 `prepareCall`）全部走通。
 
 ### 布局
 
 ```
-index.js              宿主半身：挂载渠道包、RPC 桥、签到引擎、控制台 API
+index.js              宿主半身：挂载渠道包、RPC 桥、签到引擎、路由
+                      provider、控制台 API
 client.js             浏览器半身：设置面板入口与 API 客户端
 src/channels.js       渠道能力表（登录方式 / 签到能力 / 注意事项）
 src/schedule.js       UTC+8 日期与调度纯函数
 src/runs.js           一轮签到的结果聚合（单位分列）
 src/accounts.js       账号与积分归一化（临期、冷却、待生效）
 src/rpc.js            渠道包 RPC 桥（去重、超时、错误规范化）
-src/client/panel.js   面板渲染（四页）
+src/route/normalize.js  规范模型名归并（纯函数）
+src/route/aggregate.js  候选、策略、容量交集（纯函数）
+src/route/adapter.js    路由 provider：adapter 捕获、prepareCall
+                        转发、零输出失败切换
+src/client/panel.js   面板渲染（五页）
 vendor/channel-pack/  内置渠道实现（MIT，出处见 NOTICE.md）
 ```
 
 ## 数据
 
 `~/.dsh/dsh-model-admin/`：`settings.json`（运行钟点、临期窗口、自动开关）、
-`checkin.json`（今日标记、逐渠道结果、最近 30 天历史）。
+`checkin.json`（今日标记、逐渠道结果、最近 30 天历史）、
+`routes.json`（每条路由的策略、pin、启停）。
 
 ## 声明
 

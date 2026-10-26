@@ -87,6 +87,7 @@ export function createPanel({ client, t = key => key }) {
 
   const tabDefs = [
     ['checkin', '签到'],
+    ['route', '路由'],
     ['accounts', '账号'],
     ['credits', '积分'],
     ['backup', '备份'],
@@ -135,6 +136,9 @@ export function createPanel({ client, t = key => key }) {
   async function renderBody() {
     body.replaceChildren()
     switch (state.tab) {
+      case 'route':
+        await renderRoute(body)
+        break
       case 'accounts':
         renderAccounts(body)
         break
@@ -148,6 +152,116 @@ export function createPanel({ client, t = key => key }) {
         renderCheckin(body)
         break
     }
+  }
+
+  // ── route ──────────────────────────────────────────────────────────────────
+
+  /**
+   * The routing page: one row per canonical model, its candidate channels in
+   * the order a turn walks them, the strategy, and the user's pins. Every
+   * mutation goes through the route endpoints and re-reads, so the list
+   * never shows an order the host is not using.
+   */
+  async function renderRoute(root) {
+    const card = h('section', { class: 'ma-card' })
+    card.appendChild(h('h3', {}, '模型路由'))
+    const hint = h('p', { class: 'ma-hint' },
+      '同一个模型在多个渠道可用时，路由把它归成一个条目：按候选顺序发请求，某个渠道在产出任何内容前失败，自动换下一个。'
+      + ' 想指定渠道就点亮它的 ★，★ 的顺序就是优先顺序。')
+    card.appendChild(hint)
+
+    const list = h('div', { class: 'ma-routes' })
+    card.appendChild(list)
+    root.appendChild(card)
+
+    if (state.summary?.route !== true) {
+      card.appendChild(h('p', { class: 'ma-status' }, '路由未启用（本组合没有 llm 服务）。'))
+      return
+    }
+
+    list.appendChild(h('p', { class: 'ma-status' }, '读取中…'))
+    let data
+    try {
+      data = await client.call('routes')
+    } catch (error) {
+      list.replaceChildren(h('p', { class: 'ma-status' }, `读取失败：${String(error?.message ?? error)}`))
+      return
+    }
+    const entries = data?.entries ?? []
+    if (entries.length === 0) {
+      list.replaceChildren(h('p', { class: 'ma-status' },
+        '暂无路由条目——登录至少一个渠道后，它们目录里的模型会自动出现在这里。'))
+      return
+    }
+    list.replaceChildren()
+    for (const entry of entries) {
+      list.appendChild(renderRouteRow(entry, data.dispatch ?? []))
+    }
+  }
+
+  function renderRouteRow(entry, dispatch) {
+    const row = h('div', { class: 'ma-route-row' })
+
+    const head = h('div', { class: 'ma-route-head' })
+    head.appendChild(h('span', { class: 'ma-route-name' }, entry.name))
+    head.appendChild(h('span', { class: 'ma-route-count' }, `${entry.candidates.length} 渠道`))
+    const strategy = h('select', {
+      class: 'ma-select',
+      onchange: async event => {
+        try {
+          await client.call('routeSetStrategy', { key: entry.key, strategy: event.target.value })
+          await refresh()
+        } catch (error) {
+          showError(String(error?.message ?? error))
+        }
+      },
+    },
+      h('option', { value: 'fallback', selected: entry.strategy === 'fallback' }, '顺序（fallback）'),
+      h('option', { value: 'round-robin', selected: entry.strategy === 'round-robin' }, '轮换（round-robin）'),
+      h('option', { value: 'sticky', selected: entry.strategy === 'sticky' }, '会话粘连（sticky）'))
+    head.appendChild(strategy)
+    row.appendChild(head)
+
+    const caps = []
+    if (Number.isFinite(entry.contextWindow)) caps.push(`上下文 ${formatAmount(entry.contextWindow)}`)
+    if (Number.isFinite(entry.maxTokens)) caps.push(`输出 ${formatAmount(entry.maxTokens)}`)
+    if (caps.length > 0) row.appendChild(h('p', { class: 'ma-hint' }, `容量取候选交集：${caps.join(' · ')}`))
+
+    const candidates = h('div', { class: 'ma-route-candidates' })
+    const pinned = new Set(entry.pinned ?? [])
+    for (const [index, candidate] of entry.candidates.entries()) {
+      const isPinned = pinned.has(candidate.channel)
+      const chip = h('button', {
+        class: `ma-chip${isPinned ? ' is-pinned' : ''}`,
+        type: 'button',
+        title: isPinned ? `取消优先：${candidate.channel}` : `优先使用：${candidate.channel}`,
+        onclick: async () => {
+          const current = new Set(entry.pinned ?? [])
+          if (current.has(candidate.channel)) current.delete(candidate.channel)
+          else current.add(candidate.channel)
+          // A newly pinned channel joins the front; unpinning leaves the rest.
+          const next = [...current]
+          if (!isPinned) {
+            next.splice(next.indexOf(candidate.channel), 1)
+            next.unshift(candidate.channel)
+          }
+          try {
+            await client.call('routeSetPinned', { key: entry.key, pinned: next })
+            await refresh()
+          } catch (error) {
+            showError(String(error?.message ?? error))
+          }
+        },
+      },
+        h('span', { class: 'ma-chip-order' }, String(index + 1)),
+        candidate.channel,
+        isPinned ? ' ★' : ' ☆')
+      const turns = dispatch.find(d => d.model === entry.key && d.channel === candidate.channel)?.turns
+      if (Number.isFinite(turns) && turns > 0) chip.appendChild(h('span', { class: 'ma-chip-turns' }, `${turns} 次`))
+      candidates.appendChild(chip)
+    }
+    row.appendChild(candidates)
+    return row
   }
 
   // ── check-in ───────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createBridge } from './src/rpc.js'
 import { autoCheckinChannelIds, channelOf } from './src/channels.js'
+import { RouteAdapter, ROUTE_PROVIDER_ID, ROUTE_MODEL_PREFIX, captureAdapters } from './src/route/adapter.js'
 import {
   utc8DateString, ranToday, shouldMarkToday, delayUntilHourUtc8, msUntilNextUtc8Midnight,
 } from './src/schedule.js'
@@ -276,7 +277,7 @@ function appendHistory(history, at, text, totals) {
  * `{ ok, value }` / `{ ok: false, error: { code, message } }` so the client
  * has exactly one error path.
  */
-export function createApiRoutes({ engine, bridge, settings, logger, version = MODEL_ADMIN_VERSION }) {
+export function createApiRoutes({ engine, bridge, settings, logger, version = MODEL_ADMIN_VERSION, route }) {
   /** @type {Record<string, (body: any) => Promise<any>} */
   const handlers = {
     /** Everything the console needs on mount, in one round trip. */
@@ -286,9 +287,28 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
         const row = channelOf(id)
         return { id, name: row.name, checkin: row.checkin }
       })
+      let routes = { count: 0, entries: [] }
+      if (route !== undefined) {
+        try {
+          const listed = await route.adapter.refresh()
+          routes = {
+            count: listed.length,
+            entries: listed.slice(0, 50).map(entry => ({
+              key: entry.key,
+              name: entry.name,
+              candidates: entry.candidates.length,
+              strategy: entry.strategy,
+            })),
+          }
+        } catch {
+          routes = { count: 0, entries: [] }
+        }
+      }
       return {
         version,
         pack,
+        route: route !== undefined,
+        routes,
         checkin: engine.state(),
         channels,
         settings: settings(),
@@ -346,6 +366,60 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
       settings.flush()
       return { ok: true, value: settings() }
     },
+  }
+
+  // ── the routing lane's surface ─────────────────────────────────────────────
+  /**
+   * Route handlers are attached when the caller supplies the route lane
+   * (`route: { adapter, prefs, mutate, stats }`). Kept in a separate block
+   * so a composition without the llm service simply has no route methods
+   * instead of failing the whole console.
+   */
+  if (route !== undefined) {
+    handlers.routes = async () => {
+      const entries = await route.adapter.refresh()
+      return {
+        entries: entries.map(entry => ({
+          key: entry.key,
+          name: entry.name,
+          strategy: entry.strategy,
+          pinned: entry.pinned,
+          candidates: entry.candidates.map(c => ({
+            channel: c.channel,
+            model: c.model,
+            ...c.name === undefined ? {} : { name: c.name },
+          })),
+          contextWindow: entry.contextWindow,
+          maxTokens: entry.maxTokens,
+          inputModalities: entry.inputModalities,
+        })),
+        dispatch: route.stats(),
+      }
+    }
+    handlers.routeSetStrategy = async body => {
+      const key = String(body?.key ?? '')
+      const strategy = String(body?.strategy ?? '')
+      if (key === '' || !['fallback', 'round-robin', 'sticky'].includes(strategy)) {
+        return { ok: false, error: { code: 'BAD_REQUEST', message: 'key and a known strategy are required' } }
+      }
+      route.mutate(key, { strategy })
+      return { ok: true, value: route.prefs()[key] }
+    }
+    handlers.routeSetPinned = async body => {
+      const key = String(body?.key ?? '')
+      const pinned = Array.isArray(body?.pinned) ? body.pinned.map(String) : []
+      if (key === '') return { ok: false, error: { code: 'BAD_REQUEST', message: 'key is required' } }
+      route.mutate(key, { pinned })
+      return { ok: true, value: route.prefs()[key] }
+    }
+    handlers.routeSetEnabled = async body => {
+      const key = String(body?.key ?? '')
+      if (key === '' || typeof body?.enabled !== 'boolean') {
+        return { ok: false, error: { code: 'BAD_REQUEST', message: 'key and a boolean enabled are required' } }
+      }
+      route.mutate(key, { enabled: body.enabled })
+      return { ok: true, value: route.prefs()[key] }
+    }
   }
 
   /**
@@ -437,11 +511,6 @@ export function apply(ctx, config) {
    * The pack is mounted on a scoped fiber so a composition without the
    * services it needs (a headless TUI) still loads this plugin and keeps
    * the scheduler; only the channels degrade.
-   */
-  /**
-   * The pack is mounted on a scoped fiber so a composition without the
-   * services it needs (a headless TUI) still loads this plugin and keeps
-   * the scheduler; only the channels degrade.
    *
    * Two ways the mount is skipped, both deliberate: `MODEL_ADMIN_NO_PACK=1`
    * in the launching environment (tests, and an operator who manages
@@ -459,6 +528,44 @@ export function apply(ctx, config) {
       }
     },
     warn: message => logger.warn?.(message),
+  })
+
+  // ── the routing lane ───────────────────────────────────────────────────────
+  /**
+   * The route captures every adapter the host registers from here on — the
+   * channel pack's ten channels land in this map while it mounts, and the
+   * route reuses their own `prepareCall` instead of re-implementing any
+   * channel's protocol. Installed BEFORE the pack mounts for that reason;
+   * with the pack absent the map stays empty and the route offers nothing.
+   */
+  const capturedAdapters = new Map()
+  const restoreCapture = captureAdapters(ctx, capturedAdapters)
+  const routeStore = createJsonStore(path.join(dataDir, 'routes.json'), { routes: {} })
+  const dispatchStats = new Map()
+  const routeAdapter = new RouteAdapter({
+    adapters: () => capturedAdapters,
+    llm: () => { try { return ctx.get?.('llm') } catch { return undefined } },
+    routes: () => routeStore.load().routes ?? {},
+    onDispatch: (entry, candidate) => {
+      const key = `${entry.key}\0${candidate.channel}`
+      const row = dispatchStats.get(key) ?? { model: entry.key, channel: candidate.channel, turns: 0, lastAt: 0 }
+      row.turns += 1
+      row.lastAt = Date.now()
+      dispatchStats.set(key, row)
+    },
+    logger,
+  })
+
+  let routeRegistration = null
+  ctx.inject(['llm'], scoped => {
+    const llm = scoped.get?.('llm')
+    if (llm === undefined || typeof llm.registerAdapter !== 'function') return
+    try {
+      routeRegistration = llm.registerAdapter([ROUTE_PROVIDER_ID], routeAdapter)
+      logger.info?.('dsh-model-admin: route provider registered')
+    } catch (error) {
+      logger.warn?.(`dsh-model-admin: route provider registration failed: ${String(error?.message ?? error)}`)
+    }
   })
 
   const packDisabled = process.env.MODEL_ADMIN_NO_PACK === '1'
@@ -494,12 +601,32 @@ export function apply(ctx, config) {
     logger,
   })
 
+  // The routing lane's console surface: one mutate point for every route
+  // preference, so the panel cannot write two halves of one preference.
+  const routeLane = {
+    adapter: routeAdapter,
+    prefs: () => routeStore.load().routes ?? {},
+    stats: () => [...dispatchStats.values()].sort((a, b) => b.turns - a.turns).slice(0, 100),
+    mutate: (key, patch) => {
+      const doc = routeStore.load()
+      const routes = { ...doc.routes }
+      const current = routes[key] ?? {}
+      const next = { ...current, ...patch }
+      // An empty preference object is the default state; drop it so the
+      // file does not grow one dead key per model the user ever touched.
+      if (Object.keys(next).length === 0) delete routes[key]
+      else routes[key] = next
+      routeStore.save({ ...doc, routes })
+    },
+  }
+
   const api = createApiRoutes({
     engine,
     bridge,
     settings,
     logger,
     version: MODEL_ADMIN_VERSION,
+    route: routeLane,
   })
 
   // Serve the console API under the host's web server when one exists.
@@ -560,12 +687,23 @@ export function apply(ctx, config) {
 
   ctx.effect(() => () => {
     if (timer !== null) clearTimeout(timer)
+    try {
+      routeRegistration?.()
+    } catch { /* a registration already released by the host */ }
+    try {
+      restoreCapture()
+    } catch { /* the wrap was never installed */ }
     logger.info?.('dsh-model-admin: stopped')
   }, 'dsh-model-admin: lifecycle')
 
   // Console-facing status for /summary-style diagnostics.
   return {
-    state: () => ({ ...packState, checkin: engine.state(), settings: settings() }),
+    state: () => ({
+      ...packState,
+      checkin: engine.state(),
+      settings: settings(),
+      route: { provider: ROUTE_PROVIDER_ID, channels: capturedAdapters.size },
+    }),
     api,
     version: MODEL_ADMIN_VERSION,
   }

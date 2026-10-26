@@ -108,6 +108,62 @@ check('credits.claimAll answers in the decoded vocabulary or states a refusal', 
   }
 })
 
+console.log('\n[4] the routing lane over the real pack')
+// The plugin's apply ran above with its own capture installed before the
+// pack mounted, so the llm stub recorded every registration: the pack's ten
+// channels AND the route provider itself. Rebuild the lane over the very
+// adapters the pack registered — that is the whole chain end to end.
+const { RouteAdapter, ROUTE_PROVIDER_ID, captureAdapters } = await import(new URL('../src/route/adapter.js', import.meta.url))
+
+check('the route provider registered itself on the llm service', () => {
+  const routeRegistration = stubs.llmServiceStub.registered.find(
+    entry => Array.isArray(entry[0]) && entry[0].includes(ROUTE_PROVIDER_ID),
+  )
+  assert.ok(routeRegistration, 'no registration for ' + ROUTE_PROVIDER_ID)
+})
+
+const captured = new Map()
+for (const [providers, adapter] of stubs.llmServiceStub.registered) {
+  for (const provider of providers ?? []) {
+    if (provider !== ROUTE_PROVIDER_ID) captured.set(provider, adapter)
+  }
+}
+check('the pack ten channel adapters are capturable', () => {
+  assert.ok(captured.size >= 10, `captured ${captured.size}`)
+})
+
+const lane = new RouteAdapter({
+  adapters: () => captured,
+  llm: () => stubs.llmServiceStub,
+  routes: () => ({}),
+  logger: { warn: () => {} },
+})
+const laneModels = await lane.listModels(ROUTE_PROVIDER_ID)
+check('the lane lists route entries built from real channel catalogs', () => {
+  assert.ok(Array.isArray(laneModels))
+  for (const model of laneModels) {
+    assert.ok(model.id.startsWith('route:'), model.id)
+    assert.match(model.name, /· \d+ 渠道/)
+  }
+  console.log(`      (${laneModels.length} route entries from ${captured.size} channels)`)
+})
+
+const firstEntry = (await lane.entries())[0]
+if (firstEntry !== undefined) {
+  const prepared = await lane.prepareCall(ROUTE_PROVIDER_ID, `route:${firstEntry.key}`).catch(error => error)
+  check('prepareCall over a real channel either prepares or states why', () => {
+    if (prepared instanceof Error) {
+      // With no signed-in account the channel refuses — a stated reason is
+      // the correct answer here, not a silent empty stream.
+      assert.ok(String(prepared.message).length > 0, prepared.message)
+      console.log(`      (channel refused without credentials: ${prepared.message})`)
+    } else {
+      assert.equal(typeof prepared.stream, 'function')
+      assert.ok(prepared.model !== undefined)
+    }
+  })
+}
+
 console.log(`\n${failures.length === 0 ? 'INTEGRATION PASS' : `INTEGRATION FAIL (${failures.length}): ${failures.join(', ')}`}`)
 fs.rmSync(home, { recursive: true, force: true })
 process.exit(failures.length === 0 ? 0 : 1)

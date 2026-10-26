@@ -1,13 +1,15 @@
 # dsh-model-admin
 
-Account & check-in console for AI platforms (DeepSeek Harness plugin).
+Account, check-in and model-routing console for AI platforms (DeepSeek Harness plugin).
 
-One console for the **accounts** and **daily check-ins** of many AI coding
-services: every morning it runs every check-in-capable channel once and
-reports per channel what it collected; the panel summarizes balances,
-expiring credits and run history. **It registers no model route** —
-installing it does not change which model a conversation uses. It is the
-management surface, nothing else.
+One console for three jobs: the **accounts** and **daily check-ins** of many
+AI coding services, plus **cross-channel model routing**. Every morning it
+runs every check-in-capable channel once and reports per channel what it
+collected; the same model available on several channels becomes one route
+entry, sent to the first candidate, moving to the next only when a candidate
+fails before producing any visible output. Installing it does not change the
+default model — route entries live in the model picker and apply when
+selected.
 
 English | [中文](README.md)
 
@@ -48,16 +50,52 @@ Channels without a check-in endpoint are **never** called by the automatic
 run — the panel says "no check-in" instead of leaving a button that cannot
 succeed.
 
-## Four pages
+## Five pages
 
 - **Check-in** — run now / ran-today state, auto switch, run hour (UTC+8),
   and a per-channel result table (claimed / already claimed / not active /
   no check-in / failed, with the reason).
+- **Route** — one row per model, candidates in try order; ★ pins a channel
+  to the front (the ★ order IS the priority); three strategies — fallback /
+  round-robin / sticky; each candidate shows how many turns it actually
+  served.
 - **Accounts** — per-channel account overview (how many, how many usable,
   why a read failed).
 - **Credits** — balances per account; credits and tokens listed separately
   (two units, never summed).
 - **Backup** — export an archive containing login credentials.
+
+## How model routing works
+
+The route is not a second implementation of the channels. It observes every
+adapter the host registers **before** the channel pack mounts, and reuses
+each channel's own `prepareCall` verbatim — auth, account pool, rate-limit
+rotation and wire protocol all stay the channel's business. The route does
+only the two things that are its own:
+
+1. **Grouping**: `deepseek-v4.1-flash`, `deepseek-v4.1-flash-free` and
+   `DeepSeek-V4.1-Flash-SG` normalize to one canonical key (version numbers
+   and product lines are kept; only tier markers are stripped — merging two
+   genuinely different models is the worst mistake a route can make).
+2. **Selection and switching**: the strategy picks the first candidate; only
+   when that candidate fails **before any visible output** does the next
+   candidate take over (output already streamed cannot be retracted, and
+   splicing a second candidate's answer would produce a malformed turn); a
+   failed candidate's half-finished reasoning never reaches the final
+   stream.
+
+Two invariants kept from the ecosystem's own scars:
+
+- **Capacities are the intersection, not the union**: with a 128K-window
+  candidate in the list the route declares 128K — advertising the widest
+  window and letting the narrow candidate fail on a long prompt hands the
+  failure to the user.
+- **A ★ order is strict**: pinned channels always precede unpinned ones,
+  never silently overridden by an automatic score.
+
+Route entries appear in the picker under the **Model Admin 路由** group;
+with no channel signed in the group is empty rather than full of models
+that cannot answer.
 
 ## Install
 
@@ -90,7 +128,7 @@ happens in each channel's own entry (or via "add account" in Model Admin).
 ## Development
 
 ```sh
-node --test "test/*.test.js"                    # 46 unit tests
+node --test "test/*.test.js"                    # 83 unit tests
 MODEL_ADMIN_NO_PACK=1 node scripts/smoke.mjs    # end-to-end smoke (mock pack)
 node --import ./test/stubs/register.mjs \
      scripts/integration.mjs                    # integration (real pack)
@@ -98,24 +136,30 @@ node --import ./test/stubs/register.mjs \
 
 The integration check stubs the host-provided `@deepseek-ai/*` modules via
 `test/stubs/` and runs the real channel pack's `apply` outside the DSH
-process: mount, ten provider registrations, `/api/channel-pack` RPC, and
-the bridge vocabulary (`account.list` / `credits.claimAll`) all exercised.
+process: mount, ten provider registrations, `/api/channel-pack` RPC, the
+bridge vocabulary (`account.list` / `credits.claimAll`), and the routing
+lane (route provider registration, captured channel adapters, aggregated
+route entries, `prepareCall` over a real channel) all exercised.
 
 ### Layout
 
 ```
-index.js              Host half: mounts the pack, RPC bridge, check-in
-                      engine, console API
-client.js             Browser half: settings panel entry and API client
-src/channels.js       Channel capability table (login / check-in / notes)
-src/schedule.js       UTC+8 date and scheduling pure functions
-src/runs.js           Run aggregation (units kept separate)
-src/accounts.js       Account and credit normalization (expiring /
-                      cooldown / pending)
-src/rpc.js            Channel-pack RPC bridge (dedupe, timeout, error
-                      normalization)
-src/client/panel.js   Panel rendering (four pages)
-vendor/channel-pack/  Bundled channel implementation (MIT, see NOTICE.md)
+index.js                Host half: mounts the pack, RPC bridge, check-in
+                        engine, route provider, console API
+client.js               Browser half: settings panel entry and API client
+src/channels.js         Channel capability table (login / check-in / notes)
+src/schedule.js         UTC+8 date and scheduling pure functions
+src/runs.js             Run aggregation (units kept separate)
+src/accounts.js         Account and credit normalization (expiring /
+                        cooldown / pending)
+src/rpc.js              Channel-pack RPC bridge (dedupe, timeout, error
+                        normalization)
+src/route/normalize.js  Canonical model-name grouping (pure)
+src/route/aggregate.js  Candidates, strategy, capacity intersection (pure)
+src/route/adapter.js    Route provider: adapter capture, prepareCall
+                        forwarding, zero-output failure switch
+src/client/panel.js     Panel rendering (five pages)
+vendor/channel-pack/    Bundled channel implementation (MIT, see NOTICE.md)
 ```
 
 ## Data
