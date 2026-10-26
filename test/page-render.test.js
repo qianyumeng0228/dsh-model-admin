@@ -1,19 +1,64 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
- * The console page's render contract, exercised with the stubbed react
- * (see test/stubs/react.mjs, wired by the loader): the module graph loads
- * and every section builds its element tree from a realistic summary.
- * Rendering itself is the shell's job; what this guards is the shape the
- * host will receive — tab count, section routing, and that a section never
- * crashes on the empty/zero state.
+ * The console page's render contract, exercised through the bundle itself.
+ *
+ * The browser half is a SINGLE-FILE ModuleLoader bundle: its `require` only
+ * resolves host packages (`react`), never sibling files. So the components
+ * are reached through `exports.__test`, and the stub `require` below THROWS
+ * on anything but `react` — that throw is the regression gate for "did
+ * somebody split the page back into its own module".
+ *
+ * Rendering is not simulated; the stub react records the element tree so a
+ * check can assert structure and user-visible text.
  */
 
-const { ModelAdminPage } = await import('../src/client/page.js')
+const here = path.dirname(fileURLToPath(import.meta.url))
+const clientSource = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8')
+
+const reactStub = {
+  createElement: (type, props, ...children) => {
+    const flat = children.flat(Infinity).filter(c => c !== null && c !== undefined && c !== false)
+    return {
+      type: typeof type === 'string' ? type : (type.name ?? 'Component'),
+      props: { ...(props ?? {}), children: flat.length === 0 ? undefined : flat.length === 1 ? flat[0] : flat },
+      children: flat,
+    }
+  },
+  Fragment: 'Fragment',
+  useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
+  useEffect: () => {},
+  useCallback: fn => fn,
+  useRef: value => ({ current: value }),
+  useMemo: fn => fn(),
+}
+
+/** Load the bundle; any require other than `react` fails the check. */
+function loadBundle() {
+  let descriptor = null
+  const window_ = { __ModuleLoader__: { load: d => { descriptor = d } } }
+  const document_ = {
+    head: { appendChild: () => {} },
+    getElementById: () => null,
+    createElement: () => ({ id: '', textContent: '' }),
+  }
+  new Function('window', 'document', clientSource)(window_, document_)
+  assert.ok(descriptor !== null, 'the bundle must register itself')
+  return descriptor.factory(name => {
+    if (name === 'react') return reactStub
+    throw new Error(`single-file contract violated: require('${name}')`)
+  })
+}
+
+const bundle = loadBundle()
 const {
-  CheckinSection, RouteSection, AccountsSection, CreditsSection, BackupSection,
-} = await import('../src/client/sections.js')
+  ModelAdminPage, Section, CheckinSection, RouteSection,
+  AccountsSection, CreditsSection, BackupSection, formatAmount,
+} = bundle.__test
 
 const client = {
   summary: async () => ({
@@ -34,6 +79,12 @@ const client = {
 
 const shared = { client, busy: '', setBusy: () => {}, refresh: async () => {}, setError: () => {} }
 
+test('the bundle never requires anything but react (single-file contract)', () => {
+  // loadBundle() already ran the factory with a throwing require.
+  assert.equal(typeof bundle.apply, 'function')
+  assert.deepEqual(bundle.inject, ['slots', 'locale', 'connection'])
+})
+
 test('the shell renders five tabs and one tabpanel', () => {
   const tree = ModelAdminPage({ client })
   assert.equal(tree.props.className, 'dsh-model-admin')
@@ -52,10 +103,24 @@ test('every section builds its tree from the shared props', () => {
     settings: { runHour: 9, autoCheckin: true },
     routes: { count: 1, entries: [] },
   }
-  for (const Section of [CheckinSection, RouteSection, AccountsSection, CreditsSection, BackupSection]) {
-    const tree = Section({ ...shared, summary })
-    assert.equal(typeof tree, 'object', Section.name)
-    assert.ok(tree.props !== undefined, Section.name)
+  for (const Component of [CheckinSection, RouteSection, AccountsSection, CreditsSection, BackupSection]) {
+    const tree = Component({ ...shared, summary })
+    assert.equal(typeof tree, 'object', Component.name)
+    assert.ok(tree.props !== undefined, Component.name)
+  }
+})
+
+test('the section router maps each tab id to its component', () => {
+  const summary = { pack: true, route: true, checkin: { rows: [] }, channels: [], settings: {} }
+  for (const [tab, name] of [
+    ['checkin', 'CheckinSection'],
+    ['route', 'RouteSection'],
+    ['accounts', 'AccountsSection'],
+    ['credits', 'CreditsSection'],
+    ['backup', 'BackupSection'],
+  ]) {
+    const tree = Section({ tab, ...shared, summary })
+    assert.equal(tree.type, name, `tab ${tab}`)
   }
 })
 
@@ -64,16 +129,12 @@ test('the check-in section marks the day as already run', () => {
     ...shared,
     summary: { checkin: { ranToday: true, lastResult: 'done', rows: [] }, settings: { runHour: 9, autoCheckin: true } },
   })
-  // The run button's label comes from state; find it by walking the tree.
   const texts = collectText(tree)
   assert.ok(texts.some(text => text.includes('今日已运行')), texts.join('|'))
   assert.ok(texts.some(text => text.includes('今日已跑')), texts.join('|'))
 })
 
-test('the route section states why it is empty instead of showing nothing', async () => {
-  // No channels -> the section says so. Rendered synchronously here; the
-  // data read happens in an effect, so the empty-state text is what shows
-  // on first paint.
+test('the route section states why it is empty instead of showing nothing', () => {
   const tree = RouteSection({ ...shared, summary: { route: true } })
   const texts = collectText(tree)
   assert.ok(texts.some(text => text.includes('同一个模型在多个渠道')), texts.join('|'))
@@ -85,9 +146,7 @@ test('the accounts section lists every channel row', () => {
     summary: { channels: [{ id: 'buddy' }, { id: 'trae' }, { id: 'qoder' }] },
   })
   const texts = collectText(tree)
-  assert.ok(texts.includes('buddy'))
-  assert.ok(texts.includes('trae'))
-  assert.ok(texts.includes('qoder'))
+  for (const id of ['buddy', 'trae', 'qoder']) assert.ok(texts.includes(id), id)
 })
 
 test('the credits section lists every channel row', () => {
@@ -96,22 +155,26 @@ test('the credits section lists every channel row', () => {
     summary: { channels: [{ id: 'buddy' }, { id: 'zcode' }] },
   })
   const texts = collectText(tree)
-  assert.ok(texts.includes('buddy'))
-  assert.ok(texts.includes('zcode'))
+  for (const id of ['buddy', 'zcode']) assert.ok(texts.includes(id), id)
 })
 
 test('the backup section warns about the archive contents', () => {
-  const tree = BackupSection(shared)
-  const texts = collectText(tree)
+  const texts = collectText(BackupSection(shared))
   assert.ok(texts.some(text => text.includes('敏感信息')), texts.join('|'))
 })
 
+test('formatAmount survives the inlining with the same rules', () => {
+  assert.equal(formatAmount(5_000_000_000), '5B')
+  assert.equal(formatAmount(12_500_000), '12.5M')
+  assert.equal(formatAmount(999), '999')
+  assert.equal(formatAmount(Number.NaN), '0')
+})
+
 /**
- * Every string leaf in an element tree.
+ * Every user-visible string in an element tree.
  *
- * Walks children AND element-valued props: a section hands chrome through
- * props (`action`, `label`), and those subtrees carry user-visible text too.
- * Functions and plain data are skipped — only elements and strings recurse.
+ * Walks children AND element-valued props: sections hand chrome through
+ * props (`action`, `label`), and those subtrees carry text too.
  */
 function collectText(node, out = []) {
   if (node === null || node === undefined || node === false) return out
@@ -128,8 +191,6 @@ function collectText(node, out = []) {
   for (const [key, value] of Object.entries(node.props ?? {})) {
     if (key === 'children') continue
     if (typeof value === 'string') {
-      // A plain string prop is data (className, type), not a child — but a
-      // section's `title` IS user-visible, so collect it too.
       out.push(value)
       continue
     }

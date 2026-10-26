@@ -13,6 +13,10 @@ selected.
 
 English | [中文](README.md)
 
+> Handing this over to another AI / developer: see [HANDOFF.md](HANDOFF.md) — the original
+> requirements, the projects surveyed, the architecture decisions and why, the gates as commands,
+> the known gaps, and the environment traps.
+
 ## Channels
 
 The console knows 15 account channels in three tiers:
@@ -153,12 +157,11 @@ half has its own contract check: `client.js` is loaded through
 ```
 index.js                Host half: mounts the pack, RPC bridge, check-in
                         engine, route provider, console API
-client.js               Browser half: ModuleLoader bundle registering
-                        settings.section (the left-nav row) + themed CSS +
-                        the API client
-src/client/page.js      Page shell: five tabs, summary read, error banner
-src/client/sections.js  The five sections (check-in / route / accounts /
-                        credits / backup)
+client.js               Browser half: a SINGLE-FILE ModuleLoader bundle
+                        (its require resolves host packages, not sibling
+                        files) registering settings.section (the left-nav
+                        row) + themed CSS + the API client + the five
+                        sections
 src/channels.js         Channel capability table (login / check-in / notes)
 src/schedule.js         UTC+8 date and scheduling pure functions
 src/runs.js             Run aggregation (units kept separate)

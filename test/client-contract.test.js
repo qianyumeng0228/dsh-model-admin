@@ -34,8 +34,8 @@ function loadClient() {
         const module = { exports: {} }
         const require_ = name => {
           if (name === 'react') return reactStub
-          if (name === './src/client/page.js') return { ModelAdminPage: function ModelAdminPage() {} }
-          throw new Error(`unstubbed require: ${name}`)
+          // Single-file contract: nothing but host packages may be required.
+          throw new Error(`single-file contract violated: require('${name}')`)
         }
         const result = descriptor.factory(require_)
         loaded.exports = result ?? module.exports
@@ -104,7 +104,9 @@ test('the section component is produced by the registered factory', () => {
   const { registrations } = loadClient()
   const component = registrations[0].component
   assert.equal(typeof component, 'function')
-  // The host renders it with props; our wrapper spreads them onto the page.
+  // The host renders it with props; our wrapper spreads them onto the page
+  // component. The stub createElement records the component function as the
+  // element type (it does not expand components), which is what we assert.
   const element = component({ title: 'Model Admin' })
   assert.equal(element.type.name, 'ModelAdminPage')
   assert.equal(element.props.client !== undefined, true)

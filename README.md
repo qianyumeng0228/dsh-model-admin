@@ -4,6 +4,9 @@ AI 平台账号、签到与模型路由管理台（DeepSeek Harness 插件）。
 
 [English](README.en.md) | 中文
 
+> 交接开发（给接手的 AI / 开发者）：见 [HANDOFF.md](HANDOFF.md) —— 需求原话、调研过的项目、
+> 架构决策与理由、命令级闸门、已知缺口、环境坑。
+
 统一的控制台，把三件事管在一起：多家 AI 编程服务的**登录账号**、
 **每日签到/积分领取**，以及**跨渠道的模型路由**。每早自动跑一遍所有支持
 签到的渠道，逐渠道报告领到了什么；同一个模型在多个渠道可用时归成一个
@@ -125,10 +128,9 @@ node --import ./test/stubs/register.mjs \
 ```
 index.js              宿主半身：挂载渠道包、RPC 桥、签到引擎、路由
                       provider、控制台 API
-client.js             浏览器半身：ModuleLoader bundle，注册 settings.section
-                      （设置左侧导航那一行）+ 注入主题 CSS + API 客户端
-src/client/page.js    页面外壳：五个 tab、summary 读取、错误横幅
-src/client/sections.js 五个页面组件（签到 / 路由 / 账号 / 积分 / 备份）
+client.js             浏览器半身：ModuleLoader bundle（**单文件**——模块加载器的
+                      require 只认宿主包，不认同级文件），注册 settings.section
+                      （设置左侧导航那一行）+ 主题 CSS + API 客户端 + 五个页面组件
 src/channels.js       渠道能力表（登录方式 / 签到能力 / 注意事项）
 src/schedule.js       UTC+8 日期与调度纯函数
 src/runs.js           一轮签到的结果聚合（单位分列）
