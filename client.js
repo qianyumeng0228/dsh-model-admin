@@ -537,8 +537,6 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-model-admin' },
         error === '' ? null : h('div', { className: 'ma-banner', role: 'alert' }, error),
-        h('p', { style: { fontSize: '11px', opacity: 0.5, margin: '0 0 8px' } },
-          `debug: API_PATH=${API_PATH} baseURI=${typeof document !== 'undefined' ? document.baseURI : 'n/a'}`),
         h('div', { className: 'ma-tabs', role: 'tablist' },
           TABS.map(([id, label]) => h('button', {
             key: id,
