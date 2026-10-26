@@ -41,13 +41,24 @@ export const DATA_DIR_NAME = 'dsh-model-admin'
 /** Default local hour (UTC+8) the daily run fires at. */
 export const DEFAULT_RUN_HOUR = 9
 
-/** Services this plugin cannot work without. */
-export const inject = ['settings']
+/**
+ * Services this plugin cannot work without.
+ *
+ * Empty on purpose: the console keeps its own `settings.json` and never
+ * touches the host's `settings` service, so no composition has to be
+ * degraded for this plugin to load. Everything else (webServer, llm,
+ * connection, credentials) is injected optionally inside `apply` — a host
+ * without them loses the console or the channels, not the check-in engine.
+ */
+export const inject = []
 
 /**
- * Console preferences. Only user choices live here; measured facts (last
- * run, outcomes) live in the check-in store, because they are written by
- * the scheduler rather than chosen.
+ * Console preferences, defaulted here and persisted to `settings.json`.
+ *
+ * Plain data, not a schemastery schema: the host does not parse this object
+ * (the field names are informational), and the console UI is the only
+ * writer. `sanitizeSettings()` is the free function that clamps what the UI
+ * sends.
  */
 export const Config = {
   /** Hour 0–23 (UTC+8) the daily check-in fires at. */

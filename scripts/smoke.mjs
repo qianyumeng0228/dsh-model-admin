@@ -39,8 +39,8 @@ const { createApiRoutes, sanitizeSettings, Config, name, inject } = entry
 
 console.log('\n[1] cordis contract')
 check('plugin name is model-admin', () => assert.equal(name, 'dsh-model-admin'))
-check('inject declares only required services', () => {
-  assert.deepEqual(inject, ['settings'])
+check('inject requires no host service (the console owns its own settings)', () => {
+  assert.deepEqual(inject, [])
 })
 check('Config declares the three console fields', () => {
   assert.deepEqual(Object.keys(Config).sort(), ['autoCheckin', 'expiringWindowDays', 'runHour'])
