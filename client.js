@@ -427,7 +427,6 @@ window.__ModuleLoader__.load({
         )
       )
     }
-    }
 
     function capacityText(entry) {
       const caps = []
