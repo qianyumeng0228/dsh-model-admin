@@ -29,6 +29,7 @@ import {
   utc8DateString, ranToday, shouldMarkToday, delayUntilHourUtc8, msUntilNextUtc8Midnight,
 } from './src/schedule.js'
 import { summarize, describeRun } from './src/runs.js'
+import { createUsageTracker } from './src/usage.js'
 
 /** Cordis plugin name; also the settings namespace the host serves. */
 export const name = 'dsh-model-admin'
@@ -288,7 +289,7 @@ function appendHistory(history, at, text, totals) {
  * `{ ok, value }` / `{ ok: false, error: { code, message } }` so the client
  * has exactly one error path.
  */
-export function createApiRoutes({ engine, bridge, settings, logger, version = MODEL_ADMIN_VERSION, route }) {
+export function createApiRoutes({ engine, bridge, settings, logger, version = MODEL_ADMIN_VERSION, route, usage }) {
   /** @type {Record<string, (body: any) => Promise<any>} */
   const handlers = {
     /** Everything the console needs on mount, in one round trip. */
@@ -400,6 +401,13 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
       settings.flush()
       return { ok: true, value: settings() }
     },
+
+    /** Usage summary for the panel. */
+    async usage(body) {
+      const days = Math.min(30, Math.max(1, Number(body?.days) || 7))
+      if (usage) return { ok: true, value: usage.summary(days) }
+      return { ok: true, value: { windowDays: days, totalCalls: 0, byChannel: {}, byModel: {} } }
+    },
   }
 
   // ── the routing lane's surface ─────────────────────────────────────────────
@@ -433,7 +441,7 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
     handlers.routeSetStrategy = async body => {
       const key = String(body?.key ?? '')
       const strategy = String(body?.strategy ?? '')
-      if (key === '' || !['fallback', 'round-robin', 'sticky'].includes(strategy)) {
+      if (key === '' || !['smart','order','rotate','usage','fast','weight','pace','fallback','round-robin','sticky'].includes(strategy)) {
         return { ok: false, error: { code: 'BAD_REQUEST', message: 'key and a known strategy are required' } }
       }
       route.mutate(key, { strategy })
@@ -664,6 +672,7 @@ export function apply(ctx, config) {
     logger,
     version: MODEL_ADMIN_VERSION,
     route: routeLane,
+    usage: createUsageTracker({ dataDir }),
   })
   // Serve the console API under the host's web server when one exists.
   ctx.inject(['webServer'], scoped => {
