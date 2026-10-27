@@ -552,14 +552,11 @@ export function apply(ctx, config) {
    * both cases the console reports the reason instead of an empty list.
    */
   let packState = { state: 'pending', error: '' }
+  let svcAccountPool = null
+  const svcAuth = new Map()
   const bridge = createBridge({
-    connection: () => {
-      try {
-        return ctx.get?.('connection') ?? null
-      } catch {
-        return null
-      }
-    },
+    connection: () => null,
+    services: () => ({ accountPool: svcAccountPool, auth: svcAuth }),
     warn: message => logger.warn?.(message),
   })
 
@@ -616,8 +613,15 @@ export function apply(ctx, config) {
         .then(pack => {
           if (stopped) return
           pack.apply(scoped, {})
+          try { svcAccountPool = scoped.get?.('accountPool') ?? scoped.accountPool ?? null } catch {}
+          for (const name of ['lobsteraiAuth','qoderAuth','traeAuth','clineAuth','loomyAuth','raccoonAuth','zcodeAuth','minimaxAuth','geminiAuth']) {
+            try {
+              const svc = scoped.get?.(name) ?? scoped[name]
+              if (svc) svcAuth.set(name.replace(/Auth$/, ''), svc)
+            } catch {}
+          }
           packState = { state: 'ready', error: '' }
-          logger.info?.('dsh-model-admin: channel pack mounted (10 account channels)')
+          logger.info?.('dsh-model-admin: channel pack mounted')
         })
         .catch(error => {
           if (stopped) return

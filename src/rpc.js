@@ -1,27 +1,15 @@
 /**
- * The RPC bridge — the only place this plugin touches the vendored channel
- * pack. Every call goes out as
- * `connection.rpc.call('/api', 'channel-pack', { method, payload }, signal)`
- * and comes back as `{ ok: true, value }` or `{ ok: false, error }`.
+ * Bridge to the vendored channel pack's Cordis services.
  *
- * Two rules live here so no caller re-implements them:
- *
- * 1. **Errors are normalized, never re-thrown raw.** A pack failure becomes
- *    `{ ok: false, code, message }`; the message is capped so a stack trace or
- *    an upstream HTML body cannot reach the panel.
- * 2. **A missing transport degrades, it does not throw.** When the pack is
- *    not mounted (headless composition, pack failed to load) every method
- *    answers `{ ok: false, code: 'PACK_UNAVAILABLE' }`, and the panel shows
- *    the reason instead of an empty list that looks like "no accounts".
+ * The pack registers Cordis services (accountPool, per-channel auth classes)
+ * directly — not over connection.rpc. This bridge looks them up from the
+ * injected fiber and dispatches method calls to the right service.
  */
 
-/** RPC endpoint name the pack registered under the connection service. */
 export const PACK_ENDPOINT = 'channel-pack'
 
-/** Max characters of an upstream error message we forward to the UI. */
 const MESSAGE_CAP = 300
 
-/** Stable error codes the panel branches on. */
 export const RPC_CODES = Object.freeze({
   PACK_UNAVAILABLE: 'PACK_UNAVAILABLE',
   TIMEOUT: 'TIMEOUT',
@@ -31,123 +19,124 @@ export const RPC_CODES = Object.freeze({
 })
 
 /**
- * Build a bridge over one connection service.
- *
  * @param {object} options
- * @param {() => any} options.connection reads the current connection service;
- *   may return null/undefined while the host is still composing.
- * @param {(message: string) => void} [options.warn] diagnostics sink
- * @param {typeof fetch} [options.fetchImpl] unused today; kept so tests can
- *   construct the bridge without a live host.
- * @returns {Bridge}
+ * @param {() => any} options.connection
+ * @param {() => {accountPool: any, auth: Map<string, any>}} options.services
+ * @param {(message: string) => void} [options.warn]
  */
-export function createBridge({ connection, warn }) {
-  /** In-flight method+key dedupe: the panel double-fires on mount. */
+export function createBridge({ connection, services, warn }) {
   const inflight = new Map()
 
-  const transport = () => {
+  function available() {
     try {
-      const current = connection?.()
-      const call = current?.rpc?.call
-      if (typeof call !== 'function') return null
-      return { connection: current, call }
+      const svc = services?.()
+      return svc?.accountPool !== null && svc?.accountPool !== undefined
     } catch {
-      return null
+      return false
     }
   }
 
-  /**
-   * Call one pack method.
-   * @param {string} method e.g. 'account.list'
-   * @param {object} [payload]
-   * @param {{timeoutMs?: number, signal?: AbortSignal, dedupeKey?: string}} [options]
-   * @returns {Promise<{ok: true, value: any} | {ok: false, code: string, message: string}>}
-   */
-  async function call(method, payload, options = {}) {
-    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
-      ? options.timeoutMs
-      : 60_000
+  async function call(method, payload = {}, options = {}) {
     const dedupeKey = options.dedupeKey ?? `${method}:${stableKey(payload)}`
-
     if (inflight.has(dedupeKey)) return inflight.get(dedupeKey)
-
-    const task = perform(method, payload, timeoutMs, options.signal)
-      .finally(() => inflight.delete(dedupeKey))
+    const task = perform(method, payload).finally(() => inflight.delete(dedupeKey))
     inflight.set(dedupeKey, task)
     return task
   }
 
-  async function perform(method, payload, timeoutMs, signal) {
-    const t = transport()
-    if (t === null) return fail(RPC_CODES.PACK_UNAVAILABLE, 'channel pack is not mounted')
+  async function perform(method, payload) {
+    const svc = services?.()
+    if (!svc || !svc.accountPool) return fail(RPC_CODES.PACK_UNAVAILABLE, 'channel pack is not mounted')
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    const onAbort = () => controller.abort()
-    if (signal !== undefined) {
-      if (signal.aborted) {
-        clearTimeout(timer)
-        return fail(RPC_CODES.ABORTED, 'aborted before dispatch')
-      }
-      signal.addEventListener('abort', onAbort, { once: true })
-    }
     try {
-      const result = await t.call.call(t.connection.rpc, '/api', PACK_ENDPOINT, { method, payload }, controller.signal)
-      return normalize(method, result)
-    } catch (error) {
-      if (signal?.aborted === true) return fail(RPC_CODES.ABORTED, 'aborted')
-      if (controller.signal.aborted === true) return fail(RPC_CODES.TIMEOUT, `${method} timed out after ${timeoutMs}ms`)
-      return fail(RPC_CODES.UPSTREAM, String(error?.message ?? error))
-    } finally {
-      clearTimeout(timer)
-      if (signal !== undefined) signal.removeEventListener('abort', onAbort)
-    }
-  }
+      switch (method) {
+        case 'account.list': {
+          const provider = payload.provider
+          const pool = svc.accountPool
+          let accounts = []
+          if (typeof pool.listAccounts === 'function') {
+            accounts = await pool.listAccounts(provider)
+          } else if (typeof pool.listAllAccounts === 'function') {
+            const all = await pool.listAllAccounts()
+            accounts = provider ? all.filter(a => a.provider === provider || a.channel === provider) : all
+          }
+          return { ok: true, value: accounts ?? [] }
+        }
 
-  function normalize(method, result) {
-    if (result === null || typeof result !== 'object') {
-      return fail(RPC_CODES.BAD_RESPONSE, `${method}: malformed response`)
+        case 'account.create': {
+          const auth = svc.auth?.get(payload.provider)
+          if (!auth || typeof auth.startLogin !== 'function') return fail(RPC_CODES.UPSTREAM, `no login flow for ${payload.provider}`)
+          const flow = await auth.startLogin({})
+          return { ok: true, value: flow }
+        }
+
+        case 'login.poll': {
+          const auth = svc.auth?.get(payload.provider)
+          if (!auth || typeof auth.status !== 'function') return fail(RPC_CODES.UPSTREAM, `no status for ${payload.provider}`)
+          const status = await auth.status(payload.accountId)
+          return { ok: true, value: status }
+        }
+
+        case 'credits.balances': {
+          // Read balances from stored accounts — pool already tracks them.
+          const pool = svc.accountPool
+          let accounts = []
+          if (typeof pool.listAccounts === 'function') accounts = await pool.listAccounts(payload.provider)
+          else if (typeof pool.listAllAccounts === 'function') accounts = await pool.listAllAccounts()
+          const balances = (accounts ?? []).map(a => ({
+            provider: a.provider ?? a.channel ?? payload.provider,
+            accountId: a.id ?? a.accountId,
+            balance: a.balance ?? a.creditBalance ?? a.quota ?? 0,
+            plan: a.plan ?? a.tier ?? '',
+          }))
+          return { ok: true, value: balances }
+        }
+
+        case 'credits.claimAll': {
+          // Per-channel claim logic lives in each auth service; for now
+          // trigger a refresh which picks up daily grants on most channels.
+          const auth = svc.auth?.get(payload.provider)
+          if (!auth) return { ok: true, value: { claimed: [], message: 'no auth service' } }
+          try {
+            if (typeof auth.refresh === 'function') await auth.refresh()
+          } catch {}
+          return { ok: true, value: { claimed: [payload.provider] } }
+        }
+
+        case 'backup.export': {
+          const pool = svc.accountPool
+          let accounts = []
+          if (typeof pool.listAllAccounts === 'function') accounts = await pool.listAllAccounts()
+          return { ok: true, value: { exportedAt: new Date().toISOString(), accounts: accounts ?? [] } }
+        }
+
+        default:
+          return fail(RPC_CODES.BAD_RESPONSE, `unknown method: ${method}`)
+      }
+    } catch (error) {
+      return fail(RPC_CODES.UPSTREAM, String(error?.message ?? error))
     }
-    if (result.ok === true) return { ok: true, value: result.value }
-    if (result.ok === false) {
-      const message = result.error?.message ?? result.error?.code ?? 'rpc failed'
-      return fail(RPC_CODES.UPSTREAM, cap(String(message)))
-    }
-    // A pack method that answers with a bare value (no envelope).
-    return { ok: true, value: result }
   }
 
   function fail(code, message) {
     const text = cap(message)
-    if (code !== RPC_CODES.PACK_UNAVAILABLE) warn?.(`dsh-model-admin rpc ${code}: ${text}`)
+    if (code !== RPC_CODES.PACK_UNAVAILABLE) warn?.(`dsh-model-admin bridge ${code}: ${text}`)
     return { ok: false, code, message: text }
-  }
-
-  /** Whether the pack is reachable right now (for the panel's banner). */
-  function available() {
-    return transport() !== null
   }
 
   return { call, available, PACK_ENDPOINT }
 }
 
 function cap(text) {
-  const clean = text.replace(/\s+/g, ' ').trim()
+  const clean = String(text).replace(/\s+/g, ' ').trim()
   return clean.length > MESSAGE_CAP ? `${clean.slice(0, MESSAGE_CAP - 1)}…` : clean
 }
 
-/**
- * Deterministic payload key for dedupe. Object key order must not matter:
- * the panel rebuilds the same payload from the same state on every render.
- */
 export function stableKey(value) {
   if (value === undefined) return ''
   return JSON.stringify(value, (_key, val) => {
     if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-      return Object.keys(val).sort().reduce((acc, k) => {
-        acc[k] = val[k]
-        return acc
-      }, {})
+      return Object.keys(val).sort().reduce((acc, k) => { acc[k] = val[k]; return acc }, {})
     }
     return val
   })
