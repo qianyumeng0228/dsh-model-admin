@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
           type: 'button',
           className: 'ma-button ma-button-primary',
           disabled: busy !== '' || ranToday,
-          onclick: run,
+          onClick: run,
         }, busy === 'checkin' ? '运行中…' : ranToday ? '今日已跑' : '立即运行'),
       },
         h('p', { className: 'ma-status' },
@@ -166,7 +166,7 @@ window.__ModuleLoader__.load({
           h('input', {
             type: 'checkbox',
             checked: summary?.settings?.autoCheckin !== false,
-            onchange: event => void patchSettings({ autoCheckin: event.target.checked }),
+            onChange: event => void patchSettings({ autoCheckin: event.target.checked }),
           }),
           h('span', {}, '自动运行')),
         h('label', { className: 'ma-field' },
@@ -176,7 +176,7 @@ window.__ModuleLoader__.load({
             min: '0',
             max: '23',
             value: String(summary?.settings?.runHour ?? 9),
-            onchange: event => void patchSettings({ runHour: Number(event.target.value) }),
+            onChange: event => void patchSettings({ runHour: Number(event.target.value) }),
           })),
         h('p', { className: 'ma-hint' },
           '错过（宿主关机）的轮次会在下次启动 30 秒后补跑；一轮只领到"无签到/未开启"不记今日，下次启动重试。'),
@@ -267,7 +267,7 @@ window.__ModuleLoader__.load({
           h('select', {
             className: 'ma-select',
             value: entry.strategy,
-            onchange: event => void mutate('routeSetStrategy', { key: entry.key, strategy: event.target.value }),
+            onChange: event => void mutate('routeSetStrategy', { key: entry.key, strategy: event.target.value }),
           },
             h('option', { value: 'fallback' }, '顺序'),
             h('option', { value: 'round-robin' }, '轮换'),
@@ -282,7 +282,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: `ma-chip${isPinned ? ' is-pinned' : ''}`,
               title: isPinned ? `取消优先：${candidate.channel}` : `优先使用：${candidate.channel}`,
-              onclick: () => togglePin(candidate.channel),
+              onClick: () => togglePin(candidate.channel),
             },
               h('span', { className: 'ma-chip-order' }, String(index + 1)),
               candidate.channel,
@@ -379,13 +379,13 @@ window.__ModuleLoader__.load({
           h('select', {
             className: 'ma-select',
             value: loginChannel,
-            onchange: event => setLoginChannel(event.target.value),
+            onChange: event => setLoginChannel(event.target.value),
           }, channels.map(id => h('option', { key: id, value: id }, id))),
           h('button', {
             type: 'button',
             className: 'ma-button ma-button-primary',
             disabled: loginBusy || loginChannel === '',
-            onclick: startLogin,
+            onClick: startLogin,
           }, loginBusy && loginState ? '等待授权…' : '添加账号')),
         loginState !== null
           ? h('p', { className: 'ma-hint', role: 'status' }, '请在弹出的浏览器窗口中完成授权，完成后这里会自动刷新。')
@@ -496,7 +496,7 @@ window.__ModuleLoader__.load({
           type: 'button',
           className: 'ma-button ma-button-primary',
           disabled: busy !== '',
-          onclick: run,
+          onClick: run,
         }, busy === 'backup' ? '导出中…' : '导出凭据归档'),
         note === '' ? null : h('p', { className: 'ma-status' }, note))
     }
@@ -544,7 +544,7 @@ window.__ModuleLoader__.load({
             role: 'tab',
             className: `ma-tab${tab === id ? ' is-active' : ''}`,
             'aria-selected': tab === id ? 'true' : 'false',
-            onclick: () => setTab(id),
+            onClick: () => setTab(id),
           }, label))),
         h('div', { className: 'ma-body', role: 'tabpanel' },
           h(Section, { tab, ...shared })))
