@@ -201,6 +201,81 @@ window.__ModuleLoader__.load({
         })))
     }
 
+    function UsageSection({ client, setError }) {
+      const [data, setData] = useState(null)
+      const [days, setDays] = useState(7)
+      const [loading, setLoading] = useState(false)
+
+      const load = useCallback(async (d) => {
+        setLoading(true)
+        try {
+          const res = await client.call('usage', { days: d })
+          setData(res?.value ?? res)
+        } catch (cause) {
+          setError(String(cause?.message ?? cause))
+        } finally { setLoading(false) }
+      }, [setError])
+
+      useEffect(() => { void load(days) }, [days, load])
+
+      const byChannel = data?.byChannel ?? {}
+      const byModel = data?.byModel ?? {}
+      const chEntries = Object.entries(byChannel).sort((a,b) => b[1].tokens - a[1].tokens)
+      const mEntries = Object.entries(byModel).sort((a,b) => b[1].tokens - a[1].tokens)
+
+      return h('div', {},
+        h(Card, { title: '用量统计' },
+          h('div', { style: { display:'flex', gap:8, marginBottom:12 } },
+            [1,7,30].map(d => h('button', {
+              key:d, type:'button',
+              className: `ma-tab${days===d?' is-active':''}`,
+              onClick: () => setDays(d),
+            }, `${d}天`))),
+          loading && h('p', { className:'ma-hint' }, '加载中…'),
+          !data ? null : h('div', {},
+            h('div', { style:{display:'flex',gap:24,marginBottom:16,flexWrap:'wrap'} },
+              stat('总调用', data.totalCalls ?? 0),
+              stat('失败', data.failures ?? 0),
+              stat('平均延迟', (data.avgLatencyMs ?? 0)+'ms'),
+              stat('Prompt', fmtTokens(data.totalPromptTokens)),
+              stat('Completion', fmtTokens(data.totalCompletionTokens))),
+            h('h4', { style:{margin:'12px 0 6px'} }, '按渠道'),
+            h('table', { className:'ma-table' },
+              h('thead', {}, h('tr', {},
+                h('th', {}, '渠道'), h('th', {}, '调用'), h('th', {}, 'Tokens'),
+                h('th', {}, '失败'), h('th', {}, '平均延迟'))),
+              h('tbody', {}, chEntries.length === 0
+                ? h('tr', {}, h('td', { colSpan:5, className:'ma-hint' }, '暂无数据'))
+                : chEntries.map(([ch, s]) => h('tr', { key: ch },
+                    h('td', {}, ch),
+                    h('td', {}, s.calls),
+                    h('td', {}, fmtTokens(s.tokens)),
+                    h('td', {}, s.failures),
+                    h('td', {}, s.calls ? Math.round(s.totalLatency/s.calls)+'ms' : '-'))))),
+            h('h4', { style:{margin:'16px 0 6px'} }, '按模型'),
+            h('table', { className:'ma-table' },
+              h('thead', {}, h('tr', {}, h('th', {}, '模型'), h('th', {}, '调用'), h('th', {}, 'Tokens'))),
+              h('tbody', {}, mEntries.length === 0
+                ? h('tr', {}, h('td', { colSpan:3, className:'ma-hint' }, '暂无数据'))
+                : mEntries.map(([m, s]) => h('tr', { key: m },
+                    h('td', {}, m), h('td', {}, s.calls), h('td', {}, fmtTokens(s.tokens)))))),
+          )
+        )
+      )
+    }
+
+    function stat(label, value) {
+      return h('div', {},
+        h('div', { style:{fontSize:22,fontWeight:600} }, value),
+        h('div', { className:'ma-hint' }, label))
+    }
+    function fmtTokens(n) {
+      if (!n) return '0'
+      if (n >= 1e6) return (n/1e6).toFixed(1)+'M'
+      if (n >= 1e3) return (n/1e3).toFixed(1)+'K'
+      return String(n)
+    }
+
     function RouteSection({ client, summary, setError }) {
       const [data, setData] = useState(null)
       const [readError, setReadError] = useState('')
@@ -269,9 +344,13 @@ window.__ModuleLoader__.load({
             value: entry.strategy,
             onChange: event => void mutate('routeSetStrategy', { key: entry.key, strategy: event.target.value }),
           },
-            h('option', { value: 'fallback' }, '顺序'),
-            h('option', { value: 'round-robin' }, '轮换'),
-            h('option', { value: 'sticky' }, '会话粘连'))),
+            h('option', { value: 'smart' }, '智能'),
+            h('option', { value: 'order' }, '顺序'),
+            h('option', { value: 'rotate' }, '轮流'),
+            h('option', { value: 'usage' }, '少用优先'),
+            h('option', { value: 'fast' }, '速度优先'),
+            h('option', { value: 'weight' }, '按权重'),
+            h('option', { value: 'pace' }, '重置前用完'))),
         h('p', { className: 'ma-hint' }, capacityText(entry)),
         h('div', { className: 'ma-route-candidates' },
           entry.candidates.map((candidate, index) => {
@@ -505,6 +584,7 @@ window.__ModuleLoader__.load({
     const TABS = [
       ['checkin', '签到'],
       ['route', '路由'],
+      ['usage', '用量'],
       ['accounts', '账号'],
       ['credits', '积分'],
       ['backup', '备份'],
@@ -554,6 +634,8 @@ window.__ModuleLoader__.load({
       switch (tab) {
         case 'route':
           return h(RouteSection, { key: 'route', ...shared })
+        case 'usage':
+          return h(UsageSection, { key: 'usage', ...shared })
         case 'accounts':
           return h(AccountsSection, { key: 'accounts', ...shared })
         case 'credits':
