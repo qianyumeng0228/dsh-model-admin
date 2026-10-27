@@ -369,7 +369,64 @@ window.__ModuleLoader__.load({
               Number.isFinite(turns) && turns > 0
                 ? h('span', { className: 'ma-chip-turns' }, `${turns} 次`)
                 : null)
-          })))
+          }))),
+        h(RuleEditor, { entry, mutate, channels: entry.candidates.map(c => c.channel) })
+    }
+
+    function RuleEditor({ entry, mutate, channels }) {
+      const [open, setOpen] = useState(false)
+      const [rules, setRules] = useState(entry.rules ?? [])
+      const [form, setForm] = useState({ targetChannel: channels[0] ?? '', minTokens: '', hasImages: false, timeWindow: '' })
+
+      useEffect(() => { setRules(entry.rules ?? []) }, [entry.rules])
+
+      const add = () => {
+        const rule = {
+          id: 'r' + Date.now(),
+          targetChannel: form.targetChannel,
+          ...form.minTokens !== '' ? { minTokens: Number(form.minTokens) } : {},
+          ...form.hasImages ? { hasImages: true } : {},
+          ...form.timeWindow ? { timeWindow: form.timeWindow } : {},
+          enabled: true,
+        }
+        const next = [...rules, rule]
+        setRules(next)
+        void mutate('routeSetRules', { key: entry.key, rules: next })
+        setForm({ targetChannel: channels[0] ?? '', minTokens: '', hasImages: false, timeWindow: '' })
+      }
+      const remove = (id) => {
+        const next = rules.filter(r => r.id !== id)
+        setRules(next)
+        void mutate('routeSetRules', { key: entry.key, rules: next })
+      }
+
+      return h('div', { style: { marginTop: 8 } },
+        h('button', { type:'button', className:'ma-link', onClick: () => setOpen(o => !o) },
+          open ? '▾ 规则' : '▸ 规则 (' + rules.length + ')'),
+        !open ? null : h('div', { style:{marginTop:8,paddingLeft:12,borderLeft:'2px solid #e5e5e5'} },
+          rules.length === 0 ? h('p',{className:'ma-hint'},'暂无规则。命中规则时，指定渠道会被置顶。')
+          : rules.map(r => h('div', { key:r.id, style:{display:'flex',gap:8,alignItems:'center',margin:'4px 0'} },
+              h('span',{style:{flex:1}}),
+              h('code',{}, r.targetChannel),
+              r.minTokens ? h('span',{className:'ma-hint'}, ' ≥'+r.minTokens+'tok') : null,
+              r.hasImages ? h('span',{className:'ma-hint'}, ' 含图片') : null,
+              r.timeWindow ? h('span',{className:'ma-hint'}, ' '+r.timeWindow) : null,
+              h('button',{type:'button',onClick:()=>remove(r.id),style:{color:'#c00'}},'×'))),
+          h('div', { style:{display:'flex',gap:6,marginTop:8,flexWrap:'wrap',alignItems:'center'} },
+            h('select', { className:'ma-select', value:form.targetChannel,
+              onChange:e=>setForm(f=>({...f,targetChannel:e.target.value})) },
+              channels.map(c => h('option',{key:c,value:c}, c))),
+            h('input', { type:'number', placeholder:'最少 tokens', style:{width:90,padding:'2px 6px'},
+              value:form.minTokens, onChange:e=>setForm(f=>({...f,minTokens:e.target.value})) }),
+            h('label',{style:{fontSize:12}},
+              h('input',{type:'checkbox',checked:form.hasImages,
+                onChange:e=>setForm(f=>({...f,hasImages:e.target.checked}))}),' 图片'),
+            h('input', { type:'text', placeholder:'时段 14:00-18:00', style:{width:120,padding:'2px 6px'},
+              value:form.timeWindow, onChange:e=>setForm(f=>({...f,timeWindow:e.target.value})) }),
+            h('button',{type:'button',onClick:add,className:'ma-btn'},'+ 添加'))
+        )
+      )
+    }
     }
 
     function capacityText(entry) {

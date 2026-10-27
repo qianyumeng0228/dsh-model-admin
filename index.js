@@ -462,6 +462,19 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
       route.mutate(key, { enabled: body.enabled })
       return { ok: true, value: route.prefs()[key] }
     }
+    handlers.routeGetRules = async body => {
+      const key = String(body?.key ?? '')
+      if (key === '') return { ok: false, error: { code: 'BAD_REQUEST', message: 'key is required' } }
+      const prefs = route.prefs()
+      return { ok: true, value: { key, rules: prefs[key]?.rules ?? [] } }
+    }
+    handlers.routeSetRules = async body => {
+      const key = String(body?.key ?? '')
+      const rules = Array.isArray(body?.rules) ? body.rules : []
+      if (key === '') return { ok: false, error: { code: 'BAD_REQUEST', message: 'key is required' } }
+      route.mutate(key, { rules })
+      return { ok: true, value: route.prefs()[key]?.rules ?? [] }
+    }
   }
 
   /**
