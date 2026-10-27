@@ -27,7 +27,8 @@
  * text-only fallback.
  */
 
-import { buildRouteEntry, pickCandidate, fallbackOrder, hasFallback, DEFAULT_STRATEGY } from './aggregate.js'
+import { buildRouteEntry } from './aggregate.js'
+import { pickCandidate, fallbackOrder, hasFallback, DEFAULT_STRATEGY } from './policies.js'
 import { groupByCanonical } from './normalize.js'
 
 /** Provider id the route registers under; also the picker's group name. */
