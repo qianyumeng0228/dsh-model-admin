@@ -420,6 +420,22 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
   if (route !== undefined) {
     handlers.routes = async () => {
       const entries = await route.adapter.refresh()
+      // Resolve account counts once per channel (many entries share the same
+      // channels), so the UI can show "N 个账号 · M 可用" on each candidate.
+      const channels = new Set()
+      for (const entry of entries) for (const c of entry.candidates) channels.add(c.channel)
+      const accountInfo = new Map()
+      await Promise.all([...channels].map(async channel => {
+        let accounts = []
+        try {
+          const result = await bridge.call('account.list', { provider: channel })
+          if (result?.ok) accounts = Array.isArray(result.value) ? result.value : []
+        } catch { /* leave empty */ }
+        accountInfo.set(channel, {
+          total: accounts.length,
+          available: accounts.filter(a => a?.enabled !== false && a?.disabled !== true).length,
+        })
+      }))
       return {
         entries: entries.map(entry => ({
           key: entry.key,
@@ -430,6 +446,10 @@ export function createApiRoutes({ engine, bridge, settings, logger, version = MO
             channel: c.channel,
             model: c.model,
             ...c.name === undefined ? {} : { name: c.name },
+            ...accountInfo.get(c.channel) ? {
+              accountTotal: accountInfo.get(c.channel).total,
+              accountAvailable: accountInfo.get(c.channel).available,
+            } : {},
           })),
           contextWindow: entry.contextWindow,
           maxTokens: entry.maxTokens,
