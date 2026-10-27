@@ -19,11 +19,9 @@
  */
 
 import { canonicalModelKey, canonicalDisplayName } from './normalize.js'
+import { STRATEGIES, DEFAULT_STRATEGY } from './policies.js'
 
-/** Strategies the route understands. */
-export const STRATEGIES = Object.freeze(['fallback', 'round-robin', 'sticky'])
-
-export const DEFAULT_STRATEGY = 'fallback'
+export { STRATEGIES, DEFAULT_STRATEGY }
 
 /**
  * @typedef {object} Candidate

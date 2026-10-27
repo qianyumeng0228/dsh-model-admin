@@ -29,6 +29,7 @@
 
 import { buildRouteEntry } from './aggregate.js'
 import { pickCandidate, fallbackOrder, hasFallback, DEFAULT_STRATEGY } from './policies.js'
+import { matchRule, applyRule } from './rules.js'
 import { groupByCanonical } from './normalize.js'
 
 /** Provider id the route registers under; also the picker's group name. */
@@ -80,15 +81,21 @@ export class RouteAdapter {
    * @param {object} deps
    * @param {() => Map<string, any>} deps.adapters captured channel adapters
    * @param {() => any} deps.llm the llm service, for retry policy passthrough
-   * @param {() => Record<string, {strategy?: string, pinned?: string[], enabled?: boolean}>} deps.routes route preferences
+   * @param {() => Record<string, {strategy?: string, pinned?: string[], enabled?: boolean, rules?: object[]}>} deps.routes route preferences
+   * @param {(key: string) => object[]} [deps.rulesFor] rules attached to a route key
+   * @param {() => Map<string, {avgLatency?: number, calls?: number, failures?: number}>} [deps.channelStats] live per-channel stats
    * @param {(entry: object, candidate: object) => void} [deps.onDispatch] usage hook
+   * @param {(rec: {model: string, channel: string, latencyMs: number, promptTokens?: number, completionTokens?: number, success: boolean, error?: string}) => void} [deps.onComplete] per-call completion hook
    * @param {typeof console} [deps.logger]
    */
-  constructor({ adapters, llm, routes, onDispatch, logger = console }) {
+  constructor({ adapters, llm, routes, rulesFor, channelStats, onDispatch, onComplete, logger = console }) {
     this.adapters = adapters
     this.llm = llm
     this.routes = routes
+    this.rulesFor = rulesFor
+    this.channelStats = channelStats
     this.onDispatch = onDispatch
+    this.onComplete = onComplete
     this.logger = logger
     /** @type {object[] | undefined} rebuilt by refresh() */
     this.cached = undefined
@@ -124,7 +131,17 @@ export class RouteAdapter {
       if (channel === ROUTE_PROVIDER_ID) continue
       let models = []
       try {
-        models = typeof adapter.listModels === 'function' ? await adapter.listModels(channel) : []
+        if (typeof adapter.listModels === 'function') {
+          // Some channels (e.g. minimax) can block on a slow network fetch
+          // with no timeout. One hung channel would freeze the whole route
+          // table, so cap each listing; a channel that misses the window
+          // simply contributes no candidates this round.
+          const listing = Promise.resolve(adapter.listModels(channel))
+          models = await Promise.race([
+            listing,
+            new Promise(resolve => setTimeout(() => resolve([]), 8000)),
+          ])
+        }
       } catch {
         models = []
       }
@@ -201,9 +218,10 @@ export class RouteAdapter {
 
   /**
    * Prepare one turn: resolve the entry, then hand the host a stream that
-   * walks the candidates. The first candidate's own `prepareCall` result is
-   * reused verbatim (its model info and stream are the channel's), wrapped
-   * only by the zero-output failure switch.
+   * walks the candidates. Strategy + per-channel stats + rules decide the
+   * starting candidate at stream time (when the request content is known);
+   * the chosen candidate's own `prepareCall` is then reused verbatim,
+   * wrapped by the zero-output failure switch.
    */
   async prepareCall(_provider, model, signal) {
     const key = stripPrefix(model)
@@ -213,22 +231,118 @@ export class RouteAdapter {
       error.code = 'UNKNOWN_MODEL'
       throw error
     }
-    const order = this.orderFor(entry)
-    const first = order[0]
-    this.onDispatch?.(entry, first)
-    const prepared = await this.prepareCandidate(first, signal)
+    // Per-call context carried through the fallback walk: start time, the
+    // candidate currently serving, and any token usage parsed from chunks.
+    const callCtx = {
+      startedAt: Date.now(),
+      index: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+    }
     return {
-      model: prepared.model,
-      stream: options => this.streamWithFallback(entry, order, options, prepared.stream),
+      // Model metadata is the route's own; the first visible chunk carries
+      // the serving channel's real model.
+      model: this.describeModel(entry),
+      // Async generator (not an async function): the host iterates the
+      // result directly, so calling stream(options) must itself be an async
+      // iterable rather than a Promise of one.
+      stream: async function* routeStream(options) {
+        const order = this.resolveOrder(entry, options)
+        const first = order[0]
+        this.onDispatch?.(entry, first)
+        let prepared
+        try {
+          prepared = await this.prepareCandidate(first, options.signal ?? signal)
+        } catch (prepareError) {
+          // The first candidate could not even be prepared: walk the rest.
+          this.logger.warn?.(`route: ${first.channel} could not be prepared (${String(prepareError?.message ?? prepareError)})`)
+          yield* this.streamFromOrder(entry, order, 1, options, prepareError, callCtx)
+          return
+        }
+        yield* this.streamWithFallback(entry, order, options, prepared.stream, callCtx)
+      }.bind(this),
     }
   }
 
-  /** First candidate + the rest, in the order a failure would walk them. */
-  orderFor(entry) {
-    const head = pickCandidate(entry)
+  /** Describe the virtual model for the host catalog (same shape as listModels). */
+  describeModel(entry) {
+    return {
+      provider: ROUTE_PROVIDER_ID,
+      id: `${ROUTE_MODEL_PREFIX}${entry.key}`,
+      name: `${entry.name} · ${entry.candidates.length} 渠道`,
+      inputModalities: entry.inputModalities,
+      ...entry.contextWindow === undefined ? {} : { context: { contextWindow: entry.contextWindow } },
+      ...entry.maxTokens === undefined ? {} : { defaultMaxTokens: entry.maxTokens },
+    }
+  }
+
+  /**
+   * Resolve the candidate order for one turn.
+   *
+   * 1. Strategy picks the head, using live per-channel stats (fast sorts by
+   *    latency; usage/weight/pace read quota stats when available).
+   * 2. The rest follow in fallback order.
+   * 3. Rules are evaluated top-down against the request; the first match
+   *    pins its target channel to the front (magpie behavior).
+   */
+  resolveOrder(entry, options) {
+    const stats = this.channelStats?.() ?? new Map()
+    const head = pickCandidate(entry, { stats, timestamp: Date.now() })
     if (head === undefined) return []
-    const rest = fallbackOrder(entry, head.channel)
-    return [head, ...rest.filter(candidate => candidate !== head)]
+    let order = [head, ...fallbackOrder(entry, head.channel).filter(candidate => candidate !== head)]
+    const rules = this.rulesFor?.(entry.key) ?? []
+    if (rules.length > 0) {
+      const matched = matchRule(rules, this.ruleContext(options))
+      if (matched) order = applyRule(order, matched)
+    }
+    return order
+  }
+
+  /** Build the rule-engine context from a request (tokens/images/reasoning). */
+  ruleContext(options) {
+    const messages = options?.messages ?? []
+    let hasImages = false
+    let chars = 0
+    for (const message of messages) {
+      const content = message?.content
+      const blocks = Array.isArray(content) ? content : [{ type: 'text', text: String(content ?? '') }]
+      for (const block of blocks) {
+        if (block?.type === 'image') hasImages = true
+        if (typeof block?.text === 'string') chars += block.text.length
+      }
+    }
+    return {
+      // Rough estimate: ~4 chars per token; enough for threshold rules.
+      tokens: Math.ceil(chars / 4),
+      hasImages,
+      reasoning: options?.reasoning !== undefined || options?.thinking !== undefined || options?.reasoningEffort !== undefined,
+      now: new Date(),
+    }
+  }
+
+  /**
+   * Start the fallback walk from a candidate other than the first (used when
+   * the head could not even be prepared). Yields a generator that prepares
+   * each subsequent candidate in turn.
+   */
+  async *streamFromOrder(entry, order, startIndex, options, firstError, callCtx) {
+    let index = startIndex
+    let lastError = firstError
+    while (index < order.length) {
+      const candidate = order[index]
+      callCtx.index = index
+      try {
+        const prepared = await this.prepareCandidate(candidate, options.signal)
+        this.onDispatch?.(entry, candidate)
+        yield* this.streamWithFallback(entry, order, options, prepared.stream, callCtx, index)
+        return
+      } catch (error) {
+        lastError = error
+        this.logger.warn?.(`route: ${candidate.channel} failed to prepare (${String(error?.message ?? error)})`)
+        index += 1
+      }
+    }
+    throw lastError
   }
 
   async prepareCandidate(candidate, signal) {
@@ -256,15 +370,33 @@ export class RouteAdapter {
    * reasoning must not appear beside the next candidate's answer. A
    * candidate that completes releases its buffer first, in order.
    */
-  async *streamWithFallback(entry, order, options, firstStreamFactory) {
-    let index = 0
-    let stream = typeof firstStreamFactory === 'function' ? firstStreamFactory(options) : firstStreamFactory
+  async *streamWithFallback(entry, order, options, firstStreamFactory, callCtx, startIndex = 0) {
+    let index = startIndex
+    // Adapters do not all close over the model: some read it from the stream
+    // options (e.g. lobsterai uses options.model). The route's own options
+    // carry the virtual "route:..." model, so before dispatching a candidate
+    // we rewrite provider/model to that candidate's real channel and model.
+    const candidateOptions = i => ({ ...options, provider: order[i].channel, model: order[i].model })
+    let stream = typeof firstStreamFactory === 'function' ? firstStreamFactory(candidateOptions(index)) : firstStreamFactory
     /** @type {any[]} non-visible chunks of the current candidate */
     let pending = []
     let produced = false
+    const finish = (success, error) => {
+      const candidate = order[index]
+      this.onComplete?.({
+        model: entry.key,
+        channel: candidate?.channel ?? '',
+        latencyMs: Date.now() - callCtx.startedAt,
+        promptTokens: callCtx.promptTokens,
+        completionTokens: callCtx.completionTokens,
+        success,
+        ...error ? { error: String(error?.message ?? error).slice(0, 120) } : {},
+      })
+    }
     for (;;) {
       try {
         for await (const chunk of stream) {
+          collectUsage(chunk, callCtx)
           if (isVisibleChunk(chunk)) {
             for (const buffered of pending) yield buffered
             pending = []
@@ -276,22 +408,27 @@ export class RouteAdapter {
         }
         // The candidate finished: flush whatever it buffered.
         for (const buffered of pending) yield buffered
+        finish(true)
         return
       } catch (error) {
         const candidate = order[index]
         const next = order[index + 1]
         // Visible output already went out, or there is nowhere to go: the
         // failure is the user's to see.
-        if (produced || next === undefined || !hasFallback(entry, candidate?.channel)) throw error
+        if (produced || next === undefined || !hasFallback(entry, candidate?.channel)) {
+          finish(false, error)
+          throw error
+        }
         this.logger.warn?.(
           `route: "${entry.key}" failed on ${candidate?.channel} before any output; switching to ${next.channel}`,
         )
         index += 1
+        callCtx.index = index
         pending = []
         try {
           const prepared = await this.prepareCandidate(next, options.signal)
           this.onDispatch?.(entry, next)
-          stream = prepared.stream(options)
+          stream = prepared.stream(candidateOptions(index))
         } catch (prepareError) {
           // The next candidate could not even be prepared: keep walking.
           this.logger.warn?.(`route: ${next.channel} could not be prepared (${String(prepareError?.message ?? prepareError)})`)
@@ -299,6 +436,25 @@ export class RouteAdapter {
         }
       }
     }
+  }
+}
+
+/**
+ * Parse token usage out of a stream chunk when the channel reports it.
+ * Different vocabularies (Anthropic/OpenAI-style) are tolerated; fields that
+ * are absent simply leave the running totals unchanged.
+ *
+ * @param {any} chunk
+ * @param {{promptTokens: number, completionTokens: number}} callCtx
+ */
+function collectUsage(chunk, callCtx) {
+  if (chunk === null || typeof chunk !== 'object') return
+  const usage = chunk.usage ?? chunk.usageMetadata ?? chunk.tokenUsage
+  if (usage && typeof usage === 'object') {
+    const prompt = Number(usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens ?? usage.inputTokens ?? 0)
+    const completion = Number(usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens ?? usage.outputTokens ?? 0)
+    if (Number.isFinite(prompt) && prompt > 0) callCtx.promptTokens = prompt
+    if (Number.isFinite(completion) && completion > 0) callCtx.completionTokens = completion
   }
 }
 

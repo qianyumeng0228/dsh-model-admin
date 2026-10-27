@@ -369,8 +369,9 @@ window.__ModuleLoader__.load({
               Number.isFinite(turns) && turns > 0
                 ? h('span', { className: 'ma-chip-turns' }, `${turns} 次`)
                 : null)
-          }))),
+          })),
         h(RuleEditor, { entry, mutate, channels: entry.candidates.map(c => c.channel) })
+      )
     }
 
     function RuleEditor({ entry, mutate, channels }) {

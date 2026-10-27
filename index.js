@@ -79,7 +79,7 @@ export const Config = {
  * @param {string} filePath
  * @param {object} fallback returned (and seeded) when the file is absent or unreadable
  */
-function createJsonStore(filePath, fallback) {
+export function createJsonStore(filePath, fallback) {
   return {
     path: filePath,
     /** @returns {any} */
@@ -131,7 +131,7 @@ const UNSUPPORTED_PATTERNS = [
  * something. Serial by design — firing every channel at once is the fastest
  * way to trip an upstream volume limit and burn the day.
  */
-function createCheckinEngine({ store, bridge, settings, logger }) {
+export function createCheckinEngine({ store, bridge, settings, logger }) {
   let running = false
 
   /** @returns {{enabled: boolean, lastDate: string, ranToday: boolean, running: boolean, lastResult: string, lastAt: number, rows: RunRow[]}} */
@@ -237,7 +237,7 @@ function createCheckinEngine({ store, bridge, settings, logger }) {
       row.outcome = 'inactive'
     } else if (failed > 0) {
       row.outcome = 'failed'
-      row.message = '上游报告失败'
+      row.message = summary.lastError || '上游报告失败'
     } else {
       row.outcome = 'skipped'
       row.message = '无可领取'
@@ -574,10 +574,11 @@ export function apply(ctx, config) {
    */
   let packState = { state: 'pending', error: '' }
   let svcAccountPool = null
+  let svcCredentials = null
   const svcAuth = new Map()
   const bridge = createBridge({
     connection: () => null,
-    services: () => ({ accountPool: svcAccountPool, auth: svcAuth }),
+    services: () => ({ accountPool: svcAccountPool, auth: svcAuth, credentials: svcCredentials }),
     warn: message => logger.warn?.(message),
   })
 
@@ -593,16 +594,60 @@ export function apply(ctx, config) {
   const restoreCapture = captureAdapters(ctx, capturedAdapters)
   const routeStore = createJsonStore(path.join(dataDir, 'routes.json'), { routes: {} })
   const dispatchStats = new Map()
+  const usageTracker = createUsageTracker({ dataDir })
   const routeAdapter = new RouteAdapter({
-    adapters: () => capturedAdapters,
+    adapters: () => {
+      // Prefer the host's live adapter table: the channel pack registers
+      // every channel into it via llm.registerAdapter. Monkey-patching
+      // registerAdapter is unreliable (the llm service may be frozen, so
+      // the assignment throws and the patch silently fails), but reading
+      // the table after the fact needs no patch.
+      try {
+        const llm = ctx.get?.('llm')
+        if (llm?.adapters instanceof Map) {
+          const live = new Map()
+          for (const [provider, registration] of llm.adapters) {
+            if (provider === ROUTE_PROVIDER_ID) continue
+            // The table stores a registration record { adapter, provider,
+            // retryPolicy }; unwrap it to the LlmAdapter. Older shapes may
+            // store the adapter directly, hence the fallback.
+            const adapter = registration?.adapter ?? registration
+            live.set(provider, adapter)
+          }
+          return live
+        }
+      } catch {}
+      return capturedAdapters
+    },
     llm: () => { try { return ctx.get?.('llm') } catch { return undefined } },
     routes: () => routeStore.load().routes ?? {},
+    rulesFor: key => routeStore.load().routes?.[key]?.rules ?? [],
+    channelStats: () => {
+      // Feed latency-aware strategies (fast) from the last 7 days of usage.
+      const map = new Map()
+      try {
+        const summary = usageTracker.summary(7)
+        for (const [channel, row] of Object.entries(summary.byChannel ?? {})) {
+          map.set(channel, {
+            calls: row.calls,
+            failures: row.failures,
+            avgLatency: row.calls > 0 ? Math.round(row.totalLatency / row.calls) : Infinity,
+          })
+        }
+      } catch {}
+      return map
+    },
     onDispatch: (entry, candidate) => {
       const key = `${entry.key}\0${candidate.channel}`
       const row = dispatchStats.get(key) ?? { model: entry.key, channel: candidate.channel, turns: 0, lastAt: 0 }
       row.turns += 1
       row.lastAt = Date.now()
       dispatchStats.set(key, row)
+    },
+    onComplete: rec => {
+      try { usageTracker.record(rec) } catch (error) {
+        logger.warn?.(`dsh-model-admin: usage record failed: ${String(error?.message ?? error)}`)
+      }
     },
     logger,
   })
@@ -635,6 +680,7 @@ export function apply(ctx, config) {
           if (stopped) return
           pack.apply(scoped, {})
           try { svcAccountPool = scoped.get?.('accountPool') ?? scoped.accountPool ?? null } catch {}
+          try { svcCredentials = scoped.get?.('credentials') ?? scoped.credentials ?? null } catch {}
           for (const name of ['lobsteraiAuth','qoderAuth','traeAuth','clineAuth','loomyAuth','raccoonAuth','zcodeAuth','minimaxAuth','geminiAuth']) {
             try {
               const svc = scoped.get?.(name) ?? scoped[name]
@@ -685,14 +731,14 @@ export function apply(ctx, config) {
     logger,
     version: MODEL_ADMIN_VERSION,
     route: routeLane,
-    usage: createUsageTracker({ dataDir }),
+    usage: usageTracker,
   })
   // Serve the console API under the host's web server when one exists.
   ctx.inject(['webServer'], scoped => {
     const server = scoped.webServer
     const handler = async (req, res) => {
       const body = await readJsonBody(req)
-      const result = await api.handle(body?.method ?? req.method, body)
+      const result = await api.handle(body?.method ?? req.method, body?.payload ?? body)
       const send = (status, payload) => {
         res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
         res.end(JSON.stringify(payload))

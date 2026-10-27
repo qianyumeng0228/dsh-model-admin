@@ -53,45 +53,45 @@ export const CHECKIN_KINDS = Object.freeze({
 /** @type {readonly ChannelRow[]} */
 export const CHANNELS = Object.freeze([
   Object.freeze({
-    id: 'buddy', name: 'CodeBuddy（腾讯）', vendor: '腾讯', login: 'browser', checkin: 'daily', balance: true, multiAccount: true,
-    note: '成长任务与连登奖励一并领取',
+    id: 'buddy', name: 'CodeBuddy（腾讯）', vendor: '腾讯', login: 'browser', checkin: 'none', balance: true, multiAccount: true,
+    note: '成长任务与连登奖励需 WorkBuddy 客户端；本渠道包无签到接口',
   }),
   Object.freeze({
     id: 'workbuddy', name: 'WorkBuddy（国际版）', vendor: '腾讯', login: 'browser', checkin: 'none', balance: true, multiAccount: true,
     note: '无签到接口；登录即发每日额度（24h 有效、不累积）',
   }),
   Object.freeze({
-    id: 'codearts', name: 'CodeArts（华为云）', vendor: '华为', login: 'browser', checkin: 'daily', balance: true, multiAccount: true, note: '',
+    id: 'codearts', name: 'CodeArts（华为云）', vendor: '华为', login: 'browser', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
-    id: 'lobsterai', name: 'LobsterAI（有道）', vendor: '网易', login: 'browser', checkin: 'daily', balance: true, multiAccount: true, note: '',
+    id: 'lobsterai', name: 'LobsterAI（有道）', vendor: '网易', login: 'browser', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
-    id: 'qoder', name: 'Qoder（阿里系）', vendor: '阿里', login: 'device-code', checkin: 'daily', balance: true, multiAccount: true, note: '',
+    id: 'qoder', name: 'Qoder（阿里系）', vendor: '阿里', login: 'device-code', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
-    id: 'qodercn', name: 'Qoder 中国版', vendor: '阿里', login: 'device-code', checkin: 'daily', balance: true, multiAccount: true, note: '与 Qoder 共用实现',
+    id: 'qodercn', name: 'Qoder 中国版', vendor: '阿里', login: 'device-code', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
-    id: 'trae', name: 'TRAE（字节跳动）', vendor: '字节', login: 'browser', checkin: 'daily', balance: true, multiAccount: true, note: '',
+    id: 'trae', name: 'TRAE（字节跳动）', vendor: '字节', login: 'browser', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
     id: 'cline', name: 'Cline', vendor: 'Cline', login: 'device-code', checkin: 'none', balance: true, multiAccount: true, note: 'WorkOS 设备码',
   }),
   Object.freeze({
     id: 'loomy', name: 'Loomy（讯飞）', vendor: '讯飞', login: 'sms', checkin: 'daily', balance: true, multiAccount: true,
-    note: '短信登录；凭据不能自动续期',
+    note: '短信登录；每日额度签到；凭据不能自动续期',
   }),
   Object.freeze({
-    id: 'raccoon', name: 'Raccoon Work（商汤）', vendor: '商汤', login: 'scan', checkin: 'none', balance: true, multiAccount: true,
-    note: '微信扫码 / 短信；一次性登录奖励',
+    id: 'raccoon', name: 'Raccoon Work（商汤）', vendor: '商汤', login: 'scan', checkin: 'auto', balance: true, multiAccount: true,
+    note: '微信扫码 / 短信；一次性登录奖励（每号一次）',
   }),
   Object.freeze({
-    id: 'minimax', name: 'MiniMax Code（中国版）', vendor: 'MiniMax', login: 'device-code', checkin: 'daily', balance: true, multiAccount: true, note: '',
+    id: 'minimax', name: 'MiniMax Code（中国版）', vendor: 'MiniMax', login: 'device-code', checkin: 'none', balance: true, multiAccount: true, note: '本渠道包无签到接口',
   }),
   Object.freeze({
-    id: 'minimaxintl', name: 'MiniMax Code（国际版）', vendor: 'MiniMax', login: 'device-code', checkin: 'daily', balance: true, multiAccount: true,
-    note: '与国内版账号不互通',
+    id: 'minimaxintl', name: 'MiniMax Code（国际版）', vendor: 'MiniMax', login: 'device-code', checkin: 'none', balance: true, multiAccount: true,
+    note: '本渠道包无签到接口',
   }),
   Object.freeze({
     id: 'zcode', name: 'ZCode（智谱 z.ai）', vendor: '智谱', login: 'device-code', checkin: 'daily', balance: true, multiAccount: true,

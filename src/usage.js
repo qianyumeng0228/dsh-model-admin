@@ -26,6 +26,16 @@ export function createUsageTracker({ dataDir }) {
     try { fs.writeFileSync(file, JSON.stringify(entries)) } catch {}
   }
 
+  // Persist is cheap relative to a network dispatch; coalesce bursts (fallback
+  // can complete several candidates close together) but always flush within
+  // the same tick so a restart never loses settled calls.
+  let saveQueued = false
+  function scheduleSave() {
+    if (saveQueued) return
+    saveQueued = true
+    queueMicrotask(() => { saveQueued = false; save() })
+  }
+
   /**
    * Record a completed dispatch.
    * @param {object} rec
@@ -49,7 +59,7 @@ export function createUsageTracker({ dataDir }) {
       ...rec.error ? { error: rec.error.slice(0, 100) } : {},
     })
     prune()
-    if (entries.length % 20 === 0) save()
+    scheduleSave()
   }
 
   function prune() {
