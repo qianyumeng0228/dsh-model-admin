@@ -1188,7 +1188,10 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const client = createApiClient(() => readConnection(ctx))
       const t = ctx.locale?.bind?.('modelAdmin') ?? (key => key)
-      const label = () => t('nav') || 'Model Admin'
+      const label = () => {
+        const v = t('nav')
+        return v && v !== 'nav' ? v : 'Model Admin'
+      }
 
       const dispose = ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
