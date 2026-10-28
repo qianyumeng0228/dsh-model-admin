@@ -21,9 +21,42 @@ export function createBridge({ services, warn }) {
   async function call(method, payload = {}, options = {}) {
     const key = options.dedupeKey ?? `${method}:${stableKey(payload)}`
     if (inflight.has(key)) return inflight.get(key)
-    const task = perform(method, payload).finally(() => inflight.delete(key))
+    const task = performWithDeadline(method, payload, options).finally(() => inflight.delete(key))
     inflight.set(key, task)
     return task
+  }
+
+  /**
+   * Run `perform` bounded by an optional timeout and/or external abort
+   * signal. Callers (the check-in engine, the login popup) pass a timeout so
+   * a wedged pack call cannot hang the plugin forever; the login popup also
+   * aborts on close. When neither is given, dispatch directly.
+   */
+  function performWithDeadline(method, payload, options) {
+    const timeoutMs = options.timeoutMs
+    const external = options.signal
+    if (timeoutMs === undefined && external === undefined) return perform(method, payload)
+    return new Promise(resolve => {
+      let settled = false
+      const cleanup = []
+      const settle = value => {
+        if (settled) return
+        settled = true
+        while (cleanup.length) cleanup.pop()()
+        resolve(value)
+      }
+      if (timeoutMs !== undefined) {
+        const timer = setTimeout(() => settle(fail(RPC_CODES.TIMEOUT, `timed out after ${timeoutMs}ms`)), timeoutMs)
+        cleanup.push(() => clearTimeout(timer))
+      }
+      if (external !== undefined) {
+        if (external.aborted) { settle(fail(RPC_CODES.ABORTED, 'aborted')); return }
+        const onAbort = () => settle(fail(RPC_CODES.ABORTED, 'aborted'))
+        external.addEventListener('abort', onAbort, { once: true })
+        cleanup.push(() => external.removeEventListener('abort', onAbort))
+      }
+      perform(method, payload).then(settle)
+    })
   }
 
   /** Map a provider id to its auth service, handling the aliased providers. */

@@ -19,7 +19,7 @@ test('buildRouteEntry groups by canonical key and takes the intersection', () =>
   assert.equal(entry.maxTokens, 4096)
   // cline declares text-only; trae declares none -> text-only.
   assert.deepEqual(entry.inputModalities, ['text'])
-  assert.equal(entry.strategy, 'fallback')
+  assert.equal(entry.strategy, 'smart')
   assert.equal(entry.name, 'Flash')
 })
 
@@ -63,28 +63,27 @@ test('orderCandidates is stable for unpinned ties', () => {
 
 test('an unknown strategy falls back to the default', () => {
   const entry = buildRouteEntry('x', rows, { strategy: 'teleport' })
-  assert.equal(entry.strategy, 'fallback')
-  assert.ok(STRATEGIES.includes('fallback'))
+  assert.equal(entry.strategy, 'smart')
+  assert.ok(STRATEGIES.includes('smart'))
 })
 
-test('fallback strategy always starts at the head', () => {
+test('the default strategy always starts at the head', () => {
   const entry = buildRouteEntry('x', rows)
   assert.equal(pickCandidate(entry).channel, 'buddy')
   assert.equal(pickCandidate(entry).channel, 'buddy')
 })
 
-test('round-robin walks the whole list and wraps', () => {
+test('rotate walks the whole list and wraps', () => {
   resetRotation()
-  const entry = buildRouteEntry('x', rows, { strategy: 'round-robin' })
+  const entry = buildRouteEntry('x', rows, { strategy: 'rotate' })
   const picks = [pickCandidate(entry), pickCandidate(entry), pickCandidate(entry), pickCandidate(entry)]
   assert.deepEqual(picks.map(c => c.channel), ['buddy', 'cline', 'trae', 'buddy'])
 })
 
-test('sticky keeps the conversation channel while it works', () => {
-  const entry = buildRouteEntry('x', rows, { strategy: 'sticky' })
-  assert.equal(pickCandidate(entry, { sticky: 'trae' }).channel, 'trae')
-  // An unknown sticky channel degrades to the head, not a crash.
-  assert.equal(pickCandidate(entry, { sticky: 'gemini' }).channel, 'buddy')
+test('order always starts at the head', () => {
+  const entry = buildRouteEntry('x', rows, { strategy: 'order' })
+  assert.equal(pickCandidate(entry).channel, 'buddy')
+  assert.equal(pickCandidate(entry).channel, 'buddy')
 })
 
 test('fallbackOrder skips the failed channel and keeps the rest in order', () => {

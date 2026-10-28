@@ -22,6 +22,10 @@ import { canonicalModelKey, canonicalDisplayName } from './normalize.js'
 import { STRATEGIES, DEFAULT_STRATEGY } from './policies.js'
 
 export { STRATEGIES, DEFAULT_STRATEGY }
+// The strategy machinery (pickCandidate, fallbackOrder, hasFallback,
+// resetRotation) lives in policies.js — the magpie-style policies moved
+// there. Re-export so callers and tests keep one import surface.
+export { pickCandidate, fallbackOrder, hasFallback, resetRotation } from './policies.js'
 
 /**
  * @typedef {object} Candidate
@@ -119,54 +123,6 @@ export function intersectModalities(candidates) {
     acc = acc === undefined ? set : new Set([...acc].filter(m => set.has(m)))
   }
   return acc === undefined ? ['text'] : [...acc]
-}
-
-/**
- * Rotation cursors per route key, in memory on purpose: a restart losing the
- * cursor costs nothing but a different starting point.
- */
-const rotation = new Map()
-
-/** Pick the candidate to start a turn with. */
-export function pickCandidate(entry, state = {}) {
-  const candidates = entry.candidates
-  if (candidates.length === 0) return undefined
-  switch (entry.strategy) {
-    case 'round-robin': {
-      const cursor = rotation.get(entry.key) ?? 0
-      rotation.set(entry.key, (cursor + 1) % candidates.length)
-      return candidates[cursor % candidates.length]
-    }
-    case 'sticky': {
-      // One conversation keeps its channel until that channel fails; the
-      // caller passes the last good channel back in as `state.sticky`.
-      const sticky = state.sticky
-      const hit = sticky === undefined ? undefined : candidates.find(c => c.channel === sticky)
-      return hit ?? candidates[0]
-    }
-    default:
-      return candidates[0]
-  }
-}
-
-/** Test seam: forget every rotation cursor. */
-export function resetRotation() {
-  rotation.clear()
-}
-
-/**
- * The candidate order to walk after the first one failed with no output.
- * The failed candidate is skipped; everything after it keeps its order.
- */
-export function fallbackOrder(entry, failedChannel) {
-  const start = entry.candidates.findIndex(c => c.channel === failedChannel)
-  if (start < 0) return entry.candidates
-  return [...entry.candidates.slice(start + 1), ...entry.candidates.slice(0, start)]
-}
-
-/** Whether a route has anywhere to go after one channel failed. */
-export function hasFallback(entry, failedChannel) {
-  return entry.candidates.some(c => c.channel !== failedChannel)
 }
 
 export { canonicalModelKey }

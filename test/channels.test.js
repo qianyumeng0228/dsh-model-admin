@@ -31,7 +31,7 @@ test('channelOf resolves by id and tolerates junk', () => {
 
 test('autoCheckinChannelIds excludes channels with no check-in endpoint', () => {
   const ids = autoCheckinChannelIds()
-  assert.ok(ids.includes('buddy'))
+  assert.ok(!ids.includes('buddy'))
   assert.ok(ids.includes('zcode'))
   assert.ok(!ids.includes('gemini'))
   assert.ok(!ids.includes('workbuddy'))
@@ -48,7 +48,7 @@ test('loginNeedsHuman flags SMS and scan flows', () => {
 test('the WorkBuddy rows state their caveats', () => {
   assert.equal(channelOf('workbuddy').checkin, 'none')
   assert.match(channelOf('workbuddy').note, /无签到/)
-  assert.equal(channelOf('buddy').checkin, 'daily')
+  assert.equal(channelOf('buddy').checkin, 'none')
 })
 
 test('zcode is the token-unit channel and says so', () => {

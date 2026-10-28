@@ -88,7 +88,25 @@ check('pack registered its ten account providers on the llm service', () => {
 
 console.log('\n[3] the pack answers through this plugin bridge vocabulary')
 const { createBridge } = await import(new URL('../src/rpc.js', import.meta.url))
-const bridge = createBridge({ connection: () => connection })
+// The bridge reads the pack's Cordis services directly. After the pack
+// mounted (above), those services live on the mock ctx: accountPool is
+// published by the pack, credentials is the host stub, and each `*Auth`
+// service is the pack's per-provider auth.
+const svcAuth = new Map()
+const bridge = createBridge({
+  services: () => {
+    for (const name of ['lobsteraiAuth','qoderAuth','traeAuth','clineAuth','loomyAuth','raccoonAuth','zcodeAuth','minimaxAuth','geminiAuth']) {
+      const svc = ctx.get?.(name) ?? null
+      if (svc) svcAuth.set(name.replace(/Auth$/, ''), svc)
+    }
+    return {
+      accountPool: ctx.get?.('accountPool') ?? null,
+      credentials: ctx.get?.('credentials') ?? null,
+      auth: svcAuth,
+    }
+  },
+  warn: message => console.log(`      [bridge] ${message}`),
+})
 
 const accountList = await bridge.call('account.list', { provider: 'buddy' })
 check('account.list answers (empty pool is a valid answer)', () => {
@@ -187,7 +205,10 @@ function createMockCtx({ connection, routes, onError }) {
   services.set('llm', stubs.llmServiceStub)
   services.set('commands', stubs.commandsServiceStub)
   services.set('settings', stubs.settingsServiceStub)
-  services.set('webServer', { registerRoute: (route, handler) => routes.set(route, handler) })
+  services.set('webServer', {
+    register: ({ kind, path, handler }) => routes.set(path, handler),
+    registerRoute: (route, handler) => routes.set(route, handler),
+  })
 
   const ctx = {
     logger: {

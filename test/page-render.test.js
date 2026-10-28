@@ -57,7 +57,7 @@ function loadBundle() {
 const bundle = loadBundle()
 const {
   ModelAdminPage, Section, CheckinSection, RouteSection,
-  AccountsSection, CreditsSection, BackupSection, formatAmount,
+  AccountsSection, CreditsSection, BackupSection, UsageSection, formatAmount,
 } = bundle.__test
 
 const client = {
@@ -85,11 +85,11 @@ test('the bundle never requires anything but react (single-file contract)', () =
   assert.deepEqual(bundle.inject, ['slots', 'locale', 'connection'])
 })
 
-test('the shell renders five tabs and one tabpanel', () => {
+test('the shell renders six tabs and one tabpanel', () => {
   const tree = ModelAdminPage({ client })
   assert.equal(tree.props.className, 'dsh-model-admin')
   const tabs = tree.children.find(child => child.props?.role === 'tablist')
-  assert.equal(tabs.children.length, 5)
+  assert.equal(tabs.children.length, 6)
   const panel = tree.children.find(child => child.props?.role === 'tabpanel')
   assert.ok(panel, 'a tabpanel exists')
 })
@@ -115,6 +115,7 @@ test('the section router maps each tab id to its component', () => {
   for (const [tab, name] of [
     ['checkin', 'CheckinSection'],
     ['route', 'RouteSection'],
+    ['usage', 'UsageSection'],
     ['accounts', 'AccountsSection'],
     ['credits', 'CreditsSection'],
     ['backup', 'BackupSection'],
@@ -137,7 +138,7 @@ test('the check-in section marks the day as already run', () => {
 test('the route section states why it is empty instead of showing nothing', () => {
   const tree = RouteSection({ ...shared, summary: { route: true } })
   const texts = collectText(tree)
-  assert.ok(texts.some(text => text.includes('同一个模型在多个渠道')), texts.join('|'))
+  assert.ok(texts.some(text => text.includes('暂无路由条目')), texts.join('|'))
 })
 
 test('the accounts section lists every channel row', () => {

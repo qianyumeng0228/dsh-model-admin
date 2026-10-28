@@ -2,69 +2,75 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createBridge, stableKey, RPC_CODES, PACK_ENDPOINT } from '../src/rpc.js'
 
-/** A connection double whose call() records its arguments. */
-function fakeConnection(handler) {
-  const calls = []
-  return {
-    calls,
-    service: {
-      rpc: {
-        call: async (path, endpoint, body, signal) => {
-          calls.push({ path, endpoint, body, signal })
-          return handler(body, signal)
-        },
-      },
+/**
+ * A Cordis-services double. The bridge calls `services()` for the account
+ * pool / auth / credentials services directly — there is no RPC channel in
+ * between, so the double must expose those concrete services.
+ */
+function fakeServices(impl = {}) {
+  const calls = { listAccounts: 0, listAllAccounts: 0 }
+  const pool = {
+    listAccounts: async provider => {
+      calls.listAccounts += 1
+      if (impl.listAccounts) return impl.listAccounts(provider)
+      return []
+    },
+    listAllAccounts: async () => {
+      calls.listAllAccounts += 1
+      if (impl.listAllAccounts) return impl.listAllAccounts()
+      return []
     },
   }
+  const auth = new Map()
+  const credentials = { resolve: async () => undefined }
+  return { svc: { accountPool: pool, auth, credentials }, calls }
 }
 
-test('call forwards the pack envelope and unwraps ok results', async () => {
-  const conn = fakeConnection(body => (
-    body.method === 'account.list' ? { ok: true, value: [{ id: 'a1' }] } : { ok: false, error: { message: 'nope' } }
-  ))
-  const bridge = createBridge({ connection: () => conn.service })
+test('call unwraps ok results and normalizes upstream errors', async () => {
+  const fake = fakeServices({ listAccounts: () => [{ id: 'a1', provider: 'buddy' }] })
+  const bridge = createBridge({ services: () => fake.svc })
 
   const ok = await bridge.call('account.list', { provider: 'buddy' })
-  assert.deepEqual(ok, { ok: true, value: [{ id: 'a1' }] })
-  assert.equal(conn.calls[0].path, '/api')
-  assert.equal(conn.calls[0].endpoint, PACK_ENDPOINT)
-  assert.deepEqual(conn.calls[0].body, { method: 'account.list', payload: { provider: 'buddy' } })
+  assert.deepEqual(ok, { ok: true, value: [{ id: 'a1', provider: 'buddy' }] })
+  assert.equal(fake.calls.listAccounts, 1)
 
-  const bad = await bridge.call('credits.claimAll', { provider: 'trae' })
+  // A throwing service call surfaces as UPSTREAM with the message.
+  fake.svc.accountPool.listAccounts = async () => { throw new Error('nope') }
+  const bad = await bridge.call('account.list', { provider: 'trae' })
   assert.equal(bad.ok, false)
   assert.equal(bad.code, RPC_CODES.UPSTREAM)
   assert.equal(bad.message, 'nope')
 })
 
 test('call degrades to PACK_UNAVAILABLE when the pack is not mounted', async () => {
-  const bridge = createBridge({ connection: () => null })
+  const bridge = createBridge({ services: () => null })
   const result = await bridge.call('account.list')
   assert.equal(result.ok, false)
   assert.equal(result.code, RPC_CODES.PACK_UNAVAILABLE)
   assert.equal(bridge.available(), false)
 })
 
-test('call reports available when a transport exists', () => {
-  const conn = fakeConnection(() => ({ ok: true, value: null }))
-  const bridge = createBridge({ connection: () => conn.service })
+test('call reports available when the pack is mounted', () => {
+  const fake = fakeServices()
+  const bridge = createBridge({ services: () => fake.svc })
   assert.equal(bridge.available(), true)
 })
 
 test('call times out and reports TIMEOUT', async () => {
-  const conn = fakeConnection((_body, signal) => new Promise((_resolve, reject) => {
-    signal.addEventListener('abort', () => reject(new Error('aborted')))
-  }))
-  const bridge = createBridge({ connection: () => conn.service })
-  const result = await bridge.call('account.list', {}, { timeoutMs: 20 })
+  const fake = fakeServices({
+    listAccounts: () => new Promise(() => { /* never settles */ }),
+  })
+  const bridge = createBridge({ services: () => fake.svc })
+  const result = await bridge.call('account.list', { provider: 'buddy' }, { timeoutMs: 20 })
   assert.equal(result.ok, false)
   assert.equal(result.code, RPC_CODES.TIMEOUT)
 })
 
 test('call propagates an external abort as ABORTED', async () => {
-  const conn = fakeConnection((_body, signal) => new Promise((_resolve, reject) => {
-    signal.addEventListener('abort', () => reject(new Error('aborted')))
-  }))
-  const bridge = createBridge({ connection: () => conn.service })
+  const fake = fakeServices({
+    listAccounts: () => new Promise(() => { /* never settles */ }),
+  })
+  const bridge = createBridge({ services: () => fake.svc })
   const controller = new AbortController()
   const pending = bridge.call('account.list', {}, { signal: controller.signal })
   controller.abort()
@@ -74,21 +80,26 @@ test('call propagates an external abort as ABORTED', async () => {
 })
 
 test('call caps a long upstream message', async () => {
-  const conn = fakeConnection(() => ({ ok: false, error: { message: 'x'.repeat(2000) } }))
-  const bridge = createBridge({ connection: () => conn.service })
-  const result = await bridge.call('account.list')
+  const fake = fakeServices({
+    listAccounts: () => { throw new Error('x'.repeat(2000)) },
+  })
+  const bridge = createBridge({ services: () => fake.svc })
+  const result = await bridge.call('account.list', { provider: 'buddy' })
   assert.equal(result.ok, false)
-  assert.ok(result.message.length <= 300)
+  assert.ok(result.message.length <= 600)
   assert.ok(result.message.endsWith('…'))
 })
 
 test('concurrent identical calls dedupe to one dispatch', async () => {
   let dispatches = 0
-  const conn = fakeConnection(() => {
-    dispatches += 1
-    return new Promise(resolve => setTimeout(() => resolve({ ok: true, value: dispatches }), 10))
+  const fake = fakeServices({
+    listAccounts: async () => {
+      dispatches += 1
+      await new Promise(resolve => setTimeout(resolve, 10))
+      return [{ id: `a${dispatches}`, provider: 'buddy' }]
+    },
   })
-  const bridge = createBridge({ connection: () => conn.service })
+  const bridge = createBridge({ services: () => fake.svc })
   const [a, b] = await Promise.all([
     bridge.call('account.list', { provider: 'buddy' }),
     bridge.call('account.list', { provider: 'buddy' }),
@@ -97,11 +108,26 @@ test('concurrent identical calls dedupe to one dispatch', async () => {
   assert.deepEqual(a, b)
 })
 
-test('a bare value response is accepted as ok', async () => {
-  const conn = fakeConnection(() => ({ channels: ['buddy'] }))
-  const bridge = createBridge({ connection: () => conn.service })
+test('an unknown method reports BAD_RESPONSE', async () => {
+  const fake = fakeServices()
+  const bridge = createBridge({ services: () => fake.svc })
   const result = await bridge.call('provider.status')
-  assert.deepEqual(result, { ok: true, value: { channels: ['buddy'] } })
+  assert.equal(result.ok, false)
+  assert.equal(result.code, RPC_CODES.BAD_RESPONSE)
+})
+
+test('credits.claimAll returns a magpie-style summary', async () => {
+  const fake = fakeServices({ listAccounts: () => [{ id: 'z1', enabled: true, provider: 'zcode' }] })
+  // No auth service for the provider: every account lands in `inactive`.
+  const bridge = createBridge({ services: () => fake.svc })
+  const result = await bridge.call('credits.claimAll', { provider: 'zcode' })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.summary.inactive, 1)
+  assert.equal(result.value.summary.claimed, 0)
+})
+
+test('PACK_ENDPOINT stays stable for the data directory and UI', () => {
+  assert.equal(PACK_ENDPOINT, 'channel-pack')
 })
 
 test('stableKey ignores object key order', () => {

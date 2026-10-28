@@ -112,7 +112,9 @@ test('prepareCall forwards to the first candidate and streams its output', async
   })
   const { adapter, dispatches } = makeAdapter({ buddy: buddy.adapter })
   const prepared = await adapter.prepareCall(ROUTE_PROVIDER_ID, `${ROUTE_MODEL_PREFIX}hy3`)
-  assert.equal(prepared.model.provider, 'buddy')
+  // Model metadata is the route's own; the serving channel is dispatched
+  // inside the stream (and tracked in `dispatches`).
+  assert.equal(prepared.model.provider, ROUTE_PROVIDER_ID)
   const chunks = []
   for await (const chunk of prepared.stream({ messages: [] })) chunks.push(chunk)
   assert.deepEqual(chunks.map(c => c.text), ['h', 'e', 'l', 'l', 'o'])
